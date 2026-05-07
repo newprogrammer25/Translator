@@ -129,30 +129,3 @@ export interface DialogueBody {
 export function streamDialogue(body: DialogueBody, handlers: SSEHandlers): Promise<void> {
   return streamSSE("/api/dialogue", body, handlers);
 }
-
-export async function transcribeAudio(blob: Blob, language: string): Promise<string> {
-  const fd = new FormData();
-  const ext = (blob.type.split("/")[1] || "webm").split(";")[0];
-  fd.append("file", blob, `audio.${ext}`);
-  fd.append("language", language);
-  const res = await fetch(apiUrl("/api/transcribe"), { method: "POST", body: fd });
-  if (!res.ok) throw new Error(`transcribe ${res.status}`);
-  const data = (await res.json()) as { text: string };
-  return data.text;
-}
-
-export async function fetchTTS(
-  text: string,
-  voice = "alloy",
-  speed = 1.0,
-  signal?: AbortSignal,
-): Promise<Blob> {
-  const res = await fetch(apiUrl("/api/tts"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice, speed, format: "mp3" }),
-    signal,
-  });
-  if (!res.ok) throw new Error(`tts ${res.status}`);
-  return res.blob();
-}

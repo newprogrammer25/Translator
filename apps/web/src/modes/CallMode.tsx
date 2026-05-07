@@ -1,5 +1,5 @@
 import { ArrowDownUp, Mic, MicOff, Phone, PhoneOff, Volume2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HealthBadge } from "../components/HealthBadge";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { useLanguages } from "../hooks/useLanguages";
@@ -46,21 +46,37 @@ export function CallMode() {
   const wsRef = useRef<WebSocket | null>(null);
   const recognizersRef = useRef<Record<SpeakerId, RecognitionController | null>>({ A: null, B: null });
   const utteranceMap = useRef<Map<string, CallUtterance>>(new Map());
+  const flushFrameRef = useRef<number | null>(null);
   const { speak, cancel } = useTTS();
   const supportsSpeech = isSpeechRecognitionSupported();
 
   useEffect(() => saveJSON(PREFS_KEY, prefs), [prefs]);
 
-  const upsertUtterance = useCallback((u: CallUtterance) => {
-    utteranceMap.current.set(u.id, u);
-    setUtterances((prev) => {
-      const idx = prev.findIndex((x) => x.id === u.id);
-      if (idx === -1) return [...prev, u].sort((a, b) => a.createdAt - b.createdAt);
-      const copy = [...prev];
-      copy[idx] = u;
-      return copy;
-    });
+  // rAF-batched flush: with two simultaneous streams, naive setState-per-chunk
+  // can exceed display refresh and stutter. Coalesce into one frame's render.
+  const flushUtterances = useCallback(() => {
+    flushFrameRef.current = null;
+    setUtterances(
+      Array.from(utteranceMap.current.values()).sort((a, b) => a.createdAt - b.createdAt),
+    );
   }, []);
+
+  const upsertUtterance = useCallback(
+    (u: CallUtterance) => {
+      utteranceMap.current.set(u.id, u);
+      if (flushFrameRef.current === null) {
+        flushFrameRef.current = requestAnimationFrame(flushUtterances);
+      }
+    },
+    [flushUtterances],
+  );
+
+  useEffect(
+    () => () => {
+      if (flushFrameRef.current !== null) cancelAnimationFrame(flushFrameRef.current);
+    },
+    [],
+  );
 
   const handleSocketMessage = useCallback(
     (data: { type: string; id?: string; content?: string; message?: string }) => {
@@ -313,6 +329,43 @@ interface SpeakerColumnProps {
   disabled?: boolean;
 }
 
+// Memoize: when one utterance updates we only want that row to re-render,
+// not all sibling rows on the same speaker side.
+interface UtteranceItemProps {
+  utterance: CallUtterance;
+  onPlay: (text: string) => void;
+}
+
+const UtteranceItem = memo(
+  function UtteranceItem({ utterance: u, onPlay }: UtteranceItemProps) {
+    return (
+      <div className="bg-ink-900/50 rounded-xl p-3 space-y-1.5 stream-pane">
+        <div className="text-sm text-ink-200">{u.original}</div>
+        <div className="text-sm text-brand-200 flex items-start gap-1.5">
+          <span className="flex-1 whitespace-pre-wrap">
+            {u.translation || (u.done ? "…" : "translating…")}
+          </span>
+          {u.translation ? (
+            <button
+              type="button"
+              onClick={() => onPlay(u.translation)}
+              className="btn-icon w-7 h-7"
+              aria-label="Play translation"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.utterance.translation === next.utterance.translation &&
+    prev.utterance.done === next.utterance.done &&
+    prev.utterance.original === next.utterance.original &&
+    prev.onPlay === next.onPlay,
+);
+
 function SpeakerColumn({
   speaker,
   lang,
@@ -337,22 +390,7 @@ function SpeakerColumn({
           <div className="text-ink-500 text-sm py-6 text-center">No turns yet.</div>
         ) : null}
         {utterances.map((u) => (
-          <div key={u.id} className="bg-ink-900/50 rounded-xl p-3 space-y-1.5">
-            <div className="text-sm text-ink-200">{u.original}</div>
-            <div className="text-sm text-brand-200 flex items-start gap-1.5">
-              <span className="flex-1 whitespace-pre-wrap">{u.translation || (u.done ? "…" : "translating…")}</span>
-              {u.translation ? (
-                <button
-                  type="button"
-                  onClick={() => onPlay(u.translation)}
-                  className="btn-icon w-7 h-7"
-                  aria-label="Play translation"
-                >
-                  <Volume2 className="w-3.5 h-3.5" />
-                </button>
-              ) : null}
-            </div>
-          </div>
+          <UtteranceItem key={u.id} utterance={u} onPlay={onPlay} />
         ))}
         {state.partial ? (
           <div className="bg-ink-900/30 rounded-xl p-3 italic text-ink-400 text-sm">{state.partial}</div>

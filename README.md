@@ -15,15 +15,18 @@ A SayMi-style AI translator — no headphones, no Bluetooth, just a fast web app
 
 ```
 apps/
-  server/   # FastAPI + OpenAI (gpt-4o-mini, whisper-1, tts-1) — streaming SSE + WebSocket
+  server/   # FastAPI + Google Gemini (gemini-2.0-flash) — streaming SSE + WebSocket
   web/      # Vite + React + TypeScript + Tailwind, lazy-loaded mode bundles
 ```
 
-### Latency optimizations
+### Latency & smoothness optimizations
 - Browser-side `SpeechRecognition` for instant partial transcripts (no audio round-trip)
-- Streaming SSE for translation/dialogue — first token in ~200–400 ms
-- Streaming `tts-1` MP3 over chunked HTTP for low playback latency
+- Browser-side `speechSynthesis` for TTS (zero network latency, offline)
+- Streaming SSE for translation/dialogue — first token in ~150–300 ms on `gemini-2.0-flash`
 - Single WebSocket per call session — concurrent translations of both speakers
+- `requestAnimationFrame` batching of streaming chunks: re-renders cap at 60–120 Hz
+- `React.memo` for chat bubbles & call utterances — only the streaming row re-renders
+- CSS `contain: content` + `content-visibility: auto` on streaming panes
 - Code-split routes & vendor chunks; total JS gzip ≈ 70 kB
 
 ## Local development
@@ -33,7 +36,7 @@ apps/
 ```bash
 cd apps/server
 poetry install
-cp .env.example .env  # add OPENAI_API_KEY
+cp .env.example .env  # add GEMINI_API_KEY (https://aistudio.google.com/app/apikey)
 poetry run uvicorn app.main:app --reload
 ```
 
@@ -63,11 +66,8 @@ docker build -t translator-server apps/server
 
 | Var | Default | Description |
 | --- | ------- | ----------- |
-| `OPENAI_API_KEY`   | _(required)_ | OpenAI key |
-| `OPENAI_MODEL`     | `gpt-4o-mini` | Chat / translation model |
-| `OPENAI_TTS_MODEL` | `tts-1`       | Text-to-speech model |
-| `OPENAI_TTS_VOICE` | `alloy`       | Default voice |
-| `OPENAI_STT_MODEL` | `whisper-1`   | Speech-to-text model |
+| `GEMINI_API_KEY`   | _(required)_ | Google Gemini API key (AI Studio) |
+| `GEMINI_MODEL`     | `gemini-2.0-flash` | Gemini model used for translation & dialogue |
 | `ALLOWED_ORIGINS`  | `*`           | Comma-separated CORS origins |
 | `VITE_API_BASE`    | `""`          | Frontend → backend base URL (defaults to same origin / Vite proxy) |
 

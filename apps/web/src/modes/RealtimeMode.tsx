@@ -1,9 +1,10 @@
 import { ArrowRightLeft, Copy, Volume2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { HealthBadge } from "../components/HealthBadge";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { RecordButton } from "../components/RecordButton";
 import { useLanguages } from "../hooks/useLanguages";
+import { useStreamingText } from "../hooks/useStreamingText";
 import { useTTS } from "../hooks/useTTS";
 import { streamTranslate } from "../lib/api";
 import { isSpeechRecognitionSupported, startRecognition, type RecognitionController } from "../lib/speech";
@@ -29,7 +30,7 @@ export function RealtimeMode() {
   const [recording, setRecording] = useState(false);
   const [partial, setPartial] = useState("");
   const [transcript, setTranscript] = useState("");
-  const [translation, setTranslation] = useState("");
+  const translation = useStreamingText();
   const [error, setError] = useState<string | null>(null);
 
   const { speak, cancel } = useTTS();
@@ -51,22 +52,20 @@ export function RealtimeMode() {
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      let acc = "";
-      setTranslation("");
+      translation.reset();
       setError(null);
       try {
         await streamTranslate(
           { text, source: prefs.source, target: prefs.target },
           {
             signal: ctrl.signal,
-            onDelta: (chunk) => {
-              acc += chunk;
-              setTranslation(acc);
-            },
+            onDelta: (chunk) => translation.append(chunk),
             onError: (msg) => setError(msg),
             onDone: () => {
-              if (prefs.autoSpeak && acc.trim()) {
-                void speak(acc, { lang: prefs.target });
+              translation.finalize();
+              const final = translation.peek().trim();
+              if (prefs.autoSpeak && final) {
+                void speak(final, { lang: prefs.target });
               }
             },
           },
@@ -77,14 +76,14 @@ export function RealtimeMode() {
         }
       }
     },
-    [prefs.source, prefs.target, prefs.autoSpeak, speak],
+    [prefs.source, prefs.target, prefs.autoSpeak, speak, translation],
   );
 
   const start = useCallback(() => {
     setError(null);
     setPartial("");
     setTranscript("");
-    setTranslation("");
+    translation.reset();
     cancel();
     const controller = startRecognition(prefs.source, {
       onPartial: (text) => setPartial(text),
@@ -102,7 +101,7 @@ export function RealtimeMode() {
     if (!controller) return;
     recognizerRef.current = controller;
     setRecording(true);
-  }, [prefs.source, translate, cancel]);
+  }, [prefs.source, translate, cancel, translation]);
 
   useEffect(
     () => () => {
@@ -172,15 +171,15 @@ export function RealtimeMode() {
           partial={partial}
           empty="Press the mic and start talking…"
           onCopy={() => void navigator.clipboard.writeText(transcript)}
-          onSpeak={() => void speak(transcript, { lang: prefs.source, server: false })}
+          onSpeak={() => void speak(transcript, { lang: prefs.source })}
         />
         <Pane
           label="Translation"
-          text={translation}
+          text={translation.text}
           empty={recording ? "Translating…" : "Translation appears here."}
           accent
-          onCopy={() => void navigator.clipboard.writeText(translation)}
-          onSpeak={() => void speak(translation, { lang: prefs.target })}
+          onCopy={() => void navigator.clipboard.writeText(translation.peek())}
+          onSpeak={() => void speak(translation.peek(), { lang: prefs.target })}
         />
       </div>
 
@@ -216,7 +215,7 @@ interface PaneProps {
   onSpeak: () => void;
 }
 
-function Pane({ label, text, partial, empty, accent, onCopy, onSpeak }: PaneProps) {
+const Pane = memo(function Pane({ label, text, partial, empty, accent, onCopy, onSpeak }: PaneProps) {
   const showPlaceholder = !text && !partial;
   return (
     <div className={`card p-4 min-h-[160px] flex flex-col ${accent ? "ring-1 ring-brand-500/30" : ""}`}>
@@ -243,10 +242,10 @@ function Pane({ label, text, partial, empty, accent, onCopy, onSpeak }: PaneProp
           </button>
         </div>
       </div>
-      <div className={`text-base leading-relaxed ${accent ? "text-brand-100" : "text-ink-100"}`}>
+      <div className={`text-base leading-relaxed stream-pane ${accent ? "text-brand-100" : "text-ink-100"}`}>
         {showPlaceholder ? <span className="text-ink-500">{empty}</span> : text}
         {partial ? <span className="text-ink-400 italic"> {partial}</span> : null}
       </div>
     </div>
   );
-}
+});

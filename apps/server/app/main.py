@@ -1,4 +1,4 @@
-"""FastAPI entry point for the SayMi-style translator backend.
+"""FastAPI entry point for the SayMi-style translator backend (Gemini-powered).
 
 The CORS middleware below is required for the deployed frontend to reach this
 service from any origin. Do not remove it.
@@ -13,44 +13,42 @@ from collections.abc import AsyncIterator
 
 from fastapi import (
     FastAPI,
-    File,
-    Form,
     HTTPException,
-    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from google.genai import types
 
 from .config import get_settings
-from .languages import LANGUAGES
-from .openai_client import (
-    build_dialogue_messages,
-    build_translation_messages,
-    get_client,
+from .gemini_client import (
+    build_dialogue_system,
+    build_translation_system,
+    history_to_contents,
     language_label,
+    stream_text,
 )
+from .languages import LANGUAGES
 from .schemas import (
     DialogueRequest,
     HealthResponse,
     LanguageItem,
     LanguagesResponse,
     TranslateRequest,
-    TTSRequest,
 )
 
 logger = logging.getLogger("translator")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="SayMi-style Translator API", version="0.1.0")
+app = FastAPI(title="SayMi-style Translator API", version="0.2.0")
 
 settings = get_settings()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -58,7 +56,7 @@ app.add_middleware(
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(has_api_key=bool(settings.openai_api_key))
+    return HealthResponse(has_api_key=bool(settings.gemini_api_key))
 
 
 @app.get("/api/languages", response_model=LanguagesResponse)
@@ -76,42 +74,37 @@ def _sse(event: str, data: dict | str) -> bytes:
     return f"event: {event}\ndata: {payload}\n\n".encode()
 
 
-async def _stream_chat(
-    messages: list[dict[str, str]], *, model: str | None = None, temperature: float = 0.2
+async def _sse_stream(
+    *,
+    contents: list[types.Content] | str,
+    system_instruction: str,
+    temperature: float,
 ) -> AsyncIterator[bytes]:
-    """Stream a chat completion as Server-Sent Events.
+    """Wrap :func:`stream_text` as Server-Sent Events.
 
     Emits ``event: delta`` for each token chunk, ``event: done`` when the model
     finishes, and ``event: error`` if anything goes wrong.
     """
-    client = get_client()
-    chosen_model = model or settings.openai_model
     try:
-        stream = await client.chat.completions.create(
-            model=chosen_model,
-            messages=messages,
+        async for piece in stream_text(
+            contents=contents,
+            system_instruction=system_instruction,
             temperature=temperature,
-            stream=True,
-        )
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if delta and delta.content:
-                yield _sse("delta", {"content": delta.content})
+        ):
+            yield _sse("delta", {"content": piece})
         yield _sse("done", {})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("chat stream failed")
+        logger.exception("gemini stream failed")
         yield _sse("error", {"message": str(exc)})
 
 
 @app.post("/api/translate")
 async def translate(req: TranslateRequest) -> StreamingResponse:
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
-    messages = build_translation_messages(req.text, req.source, req.target, formal=req.formal)
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
+    system = build_translation_system(req.source, req.target, formal=req.formal)
     return StreamingResponse(
-        _stream_chat(messages, temperature=0.2),
+        _sse_stream(contents=req.text, system_instruction=system, temperature=0.2),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -119,75 +112,20 @@ async def translate(req: TranslateRequest) -> StreamingResponse:
 
 @app.post("/api/dialogue")
 async def dialogue(req: DialogueRequest) -> StreamingResponse:
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
     history = [{"role": m.role, "content": m.content} for m in req.messages]
-    messages = build_dialogue_messages(
-        history,
+    contents = history_to_contents(history)
+    system = build_dialogue_system(
         bot_language=req.bot_language,
         user_language=req.user_language,
         persona=req.persona,
     )
     return StreamingResponse(
-        _stream_chat(messages, temperature=0.7),
+        _sse_stream(contents=contents, system_instruction=system, temperature=0.7),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.post("/api/transcribe")
-async def transcribe(
-    file: UploadFile = File(...),  # noqa: B008 — FastAPI uses these as dependency markers.
-    language: str = Form("auto"),  # noqa: B008
-) -> dict[str, str]:
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
-    audio = await file.read()
-    if not audio:
-        raise HTTPException(status_code=400, detail="empty audio")
-    client = get_client()
-    iso = language.split("-")[0] if language not in ("", "auto") else None
-    try:
-        result = await client.audio.transcriptions.create(
-            model=settings.openai_stt_model,
-            file=(file.filename or "audio.webm", audio, file.content_type or "audio/webm"),
-            language=iso,  # type: ignore[arg-type]
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("whisper failed")
-        raise HTTPException(status_code=502, detail=f"transcription failed: {exc}") from exc
-    return {"text": result.text}
-
-
-@app.post("/api/tts")
-async def tts(req: TTSRequest) -> StreamingResponse:
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
-    client = get_client()
-
-    async def stream_audio() -> AsyncIterator[bytes]:
-        try:
-            async with client.audio.speech.with_streaming_response.create(
-                model=settings.openai_tts_model,
-                voice=req.voice or settings.openai_tts_voice,  # type: ignore[arg-type]
-                input=req.text,
-                response_format=req.format,
-                speed=req.speed,
-            ) as response:
-                async for chunk in response.iter_bytes(chunk_size=4096):
-                    yield chunk
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("tts failed")
-            raise HTTPException(status_code=502, detail=f"tts failed: {exc}") from exc
-
-    media = {
-        "mp3": "audio/mpeg",
-        "opus": "audio/ogg",
-        "aac": "audio/aac",
-        "flac": "audio/flac",
-        "wav": "audio/wav",
-    }[req.format]
-    return StreamingResponse(stream_audio(), media_type=media)
 
 
 @app.websocket("/api/ws/call")
@@ -205,12 +143,10 @@ async def call_socket(ws: WebSocket) -> None:
       - ``{"type": "pong"}``
     """
     await ws.accept()
-    if not settings.openai_api_key:
-        await ws.send_json({"type": "error", "id": "init", "message": "OPENAI_API_KEY missing"})
+    if not settings.gemini_api_key:
+        await ws.send_json({"type": "error", "id": "init", "message": "GEMINI_API_KEY missing"})
         await ws.close()
         return
-
-    client = get_client()
 
     async def handle_translate(msg: dict) -> None:
         msg_id = str(msg.get("id", ""))
@@ -220,22 +156,12 @@ async def call_socket(ws: WebSocket) -> None:
         source = str(msg.get("source", "auto"))
         target = str(msg.get("target", "en-US"))
         formal = bool(msg.get("formal", False))
-        messages = build_translation_messages(text, source, target, formal=formal)
+        system = build_translation_system(source, target, formal=formal)
         try:
-            stream = await client.chat.completions.create(
-                model=settings.openai_model,
-                messages=messages,
-                temperature=0.2,
-                stream=True,
-            )
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    await ws.send_json(
-                        {"type": "delta", "id": msg_id, "content": delta.content}
-                    )
+            async for piece in stream_text(
+                contents=text, system_instruction=system, temperature=0.2
+            ):
+                await ws.send_json({"type": "delta", "id": msg_id, "content": piece})
             await ws.send_json({"type": "done", "id": msg_id})
         except Exception as exc:  # noqa: BLE001
             logger.exception("ws translate failed")

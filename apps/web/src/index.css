@@ -7,6 +7,15 @@
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Hint the compositor to prepare a GPU layer for the global background
+     so panel transitions and streaming text don't trigger paint floods. */
+  --app-bg: #020617;
+}
+
+* {
+  /* Limit transitions to a 60-90Hz-friendly duration; cubic-bezier matches
+     iOS-like ease for natural motion. */
+  --tw-ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 html,
@@ -83,5 +92,30 @@ input {
 
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
+  }
+
+  /* Streaming panes contain layout/paint so token updates don't repaint the page. */
+  .stream-pane {
+    contain: content;
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 200px;
+    will-change: contents;
+    transform: translateZ(0);
+  }
+
+  .smooth-scroll {
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    will-change: scroll-position;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+  .smooth-scroll {
+    scroll-behavior: auto;
   }
 }

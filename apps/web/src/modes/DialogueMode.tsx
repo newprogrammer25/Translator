@@ -1,5 +1,5 @@
 import { Languages, Mic, Send, Sparkles, Volume2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { HealthBadge } from "../components/HealthBadge";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { useLanguages } from "../hooks/useLanguages";
@@ -48,13 +48,28 @@ export function DialogueMode() {
   const [error, setError] = useState<string | null>(null);
   const recognizerRef = useRef<RecognitionController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
   const { speak, cancel } = useTTS();
   const supportsSpeech = isSpeechRecognitionSupported();
 
   useEffect(() => saveJSON(PREFS_KEY, prefs), [prefs]);
 
+  // rAF-throttled auto-scroll: streaming bubbles update many times per second;
+  // batching scroll into a single frame avoids janking the compositor.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
   }, [turns]);
 
   const send = useCallback(
@@ -67,6 +82,21 @@ export function DialogueMode() {
       setLoading(true);
       setError(null);
       let assistantText = "";
+      // rAF batching: streaming chunks arrive faster than the display refreshes.
+      // We accumulate into closures and flush once per frame so the bubble re-renders
+      // at the screen's native cadence (60-120Hz) instead of per-token.
+      let pendingFrame: number | null = null;
+      const scheduleFlush = (build: () => DialogueTurn) => {
+        if (pendingFrame !== null) return;
+        pendingFrame = requestAnimationFrame(() => {
+          pendingFrame = null;
+          setTurns((prev) => {
+            const copy = [...prev];
+            copy[copy.length - 1] = build();
+            return copy;
+          });
+        });
+      };
       try {
         await streamDialogue(
           {
@@ -78,14 +108,20 @@ export function DialogueMode() {
           {
             onDelta: (chunk) => {
               assistantText += chunk;
+              scheduleFlush(() => ({ role: "assistant", content: assistantText }));
+            },
+            onError: (msg) => setError(msg),
+            onDone: () => {
+              if (pendingFrame !== null) {
+                cancelAnimationFrame(pendingFrame);
+                pendingFrame = null;
+              }
               setTurns((prev) => {
                 const copy = [...prev];
                 copy[copy.length - 1] = { role: "assistant", content: assistantText };
                 return copy;
               });
             },
-            onError: (msg) => setError(msg),
-            onDone: () => {},
           },
         );
         if (prefs.autoSpeak && assistantText.trim()) {
@@ -94,6 +130,7 @@ export function DialogueMode() {
         if (prefs.showTranslation && prefs.userLanguage !== "auto") {
           // Translate the assistant reply into the user's language so they can read along.
           let translation = "";
+          let trFrame: number | null = null;
           await streamTranslate(
             {
               text: assistantText,
@@ -103,6 +140,25 @@ export function DialogueMode() {
             {
               onDelta: (chunk) => {
                 translation += chunk;
+                if (trFrame !== null) return;
+                trFrame = requestAnimationFrame(() => {
+                  trFrame = null;
+                  setTurns((prev) => {
+                    const copy = [...prev];
+                    copy[copy.length - 1] = {
+                      role: "assistant",
+                      content: assistantText,
+                      translation,
+                    };
+                    return copy;
+                  });
+                });
+              },
+              onDone: () => {
+                if (trFrame !== null) {
+                  cancelAnimationFrame(trFrame);
+                  trFrame = null;
+                }
                 setTurns((prev) => {
                   const copy = [...prev];
                   copy[copy.length - 1] = {
@@ -223,7 +279,7 @@ export function DialogueMode() {
                 turn={turn}
                 onSpeak={() => {
                   if (turn.role === "assistant") void speak(turn.content, { lang: prefs.botLanguage });
-                  else void speak(turn.content, { lang: prefs.userLanguage, server: false });
+                  else void speak(turn.content, { lang: prefs.userLanguage });
                 }}
               />
             ))
@@ -302,7 +358,17 @@ interface BubbleProps {
   onSpeak: () => void;
 }
 
-function Bubble({ turn, onSpeak }: BubbleProps) {
+// Memoize: only the streaming bubble re-renders per chunk. Past bubbles are
+// frozen, so the React diff over a 200-message chat stays cheap.
+const Bubble = memo(
+  BubbleImpl,
+  (prev, next) =>
+    prev.turn.role === next.turn.role &&
+    prev.turn.content === next.turn.content &&
+    prev.turn.translation === next.turn.translation,
+);
+
+function BubbleImpl({ turn, onSpeak }: BubbleProps) {
   const isUser = turn.role === "user";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>

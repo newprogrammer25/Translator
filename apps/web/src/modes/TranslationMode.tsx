@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { HealthBadge } from "../components/HealthBadge";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { useLanguages } from "../hooks/useLanguages";
+import { useStreamingText } from "../hooks/useStreamingText";
 import { useTTS } from "../hooks/useTTS";
 import { streamTranslate } from "../lib/api";
 import { loadJSON, saveJSON } from "../lib/storage";
@@ -20,7 +21,7 @@ export function TranslationMode() {
   const languages = useLanguages();
   const [prefs, setPrefs] = useState<Prefs>(() => loadJSON(PREFS_KEY, DEFAULT_PREFS));
   const [input, setInput] = useState("");
-  const [output, setOutput] = useState("");
+  const out = useStreamingText();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,28 +35,27 @@ export function TranslationMode() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) {
-        setOutput("");
+        out.reset();
         setLoading(false);
         return;
       }
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      let acc = "";
       setLoading(true);
-      setOutput("");
+      out.reset();
       setError(null);
       try {
         await streamTranslate(
           { text: trimmed, source: prefs.source, target: prefs.target, formal: prefs.formal },
           {
             signal: ctrl.signal,
-            onDelta: (chunk) => {
-              acc += chunk;
-              setOutput(acc);
-            },
+            onDelta: (chunk) => out.append(chunk),
             onError: (msg) => setError(msg),
-            onDone: () => setLoading(false),
+            onDone: () => {
+              out.finalize();
+              setLoading(false);
+            },
           },
         );
       } catch (err) {
@@ -65,7 +65,7 @@ export function TranslationMode() {
         }
       }
     },
-    [prefs.source, prefs.target, prefs.formal],
+    [prefs.source, prefs.target, prefs.formal, out],
   );
 
   // Debounced auto-translate so the user can paste / type freely.
@@ -145,7 +145,7 @@ export function TranslationMode() {
               type="button"
               className="btn-ghost text-xs"
               disabled={!input}
-              onClick={() => void speak(input, { lang: prefs.source, server: false })}
+              onClick={() => void speak(input, { lang: prefs.source })}
               aria-label="Play source"
             >
               <Volume2 className="w-3.5 h-3.5" /> Listen
@@ -160,23 +160,23 @@ export function TranslationMode() {
             </span>
             <span>{loading ? "translating…" : ""}</span>
           </div>
-          <div className="text-base leading-relaxed text-brand-100 whitespace-pre-wrap min-h-[160px]">
-            {output || <span className="text-ink-500">Translation appears here.</span>}
+          <div className="text-base leading-relaxed text-brand-100 whitespace-pre-wrap min-h-[160px] stream-pane">
+            {out.text || <span className="text-ink-500">Translation appears here.</span>}
           </div>
           <div className="flex items-center gap-2 justify-end">
             <button
               type="button"
               className="btn-ghost text-xs"
-              disabled={!output}
-              onClick={() => void navigator.clipboard.writeText(output)}
+              disabled={!out.text}
+              onClick={() => void navigator.clipboard.writeText(out.peek())}
             >
               <Copy className="w-3.5 h-3.5" /> Copy
             </button>
             <button
               type="button"
               className="btn-ghost text-xs"
-              disabled={!output}
-              onClick={() => void speak(output, { lang: prefs.target })}
+              disabled={!out.text}
+              onClick={() => void speak(out.peek(), { lang: prefs.target })}
             >
               <Volume2 className="w-3.5 h-3.5" /> Speak
             </button>

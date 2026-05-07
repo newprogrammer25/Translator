@@ -26,13 +26,6 @@ class DialogueRequest(BaseModel):
     persona: str | None = None
 
 
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=4000)
-    voice: str = "alloy"
-    speed: float = Field(default=1.0, ge=0.25, le=4.0)
-    format: Literal["mp3", "opus", "aac", "flac", "wav"] = "mp3"
-
-
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     has_api_key: bool
