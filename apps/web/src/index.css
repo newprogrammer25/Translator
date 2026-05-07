@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background-color: #020617;
+  color: #e2e8f0;
+  font-family: Inter, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+  overscroll-behavior-y: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+textarea,
+input {
+  font-family: inherit;
+}
+
+@layer components {
+  .glass {
+    @apply bg-ink-900/60 backdrop-blur-xl border border-ink-800/80 ring-1 ring-white/5;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+           transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed
+           disabled:active:scale-100;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-500 text-ink-950 hover:bg-brand-400 shadow-lg shadow-brand-500/20;
+  }
+
+  .btn-ghost {
+    @apply btn text-ink-200 hover:bg-ink-800/70;
+  }
+
+  .btn-icon {
+    @apply inline-flex items-center justify-center rounded-lg w-9 h-9 text-ink-300
+           hover:bg-ink-800/70 hover:text-white transition active:scale-95
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .card {
+    @apply glass rounded-2xl;
+  }
+
+  .input {
+    @apply w-full bg-ink-950/60 border border-ink-800 rounded-xl px-3 py-2 text-sm
+           text-ink-100 placeholder-ink-500 focus:outline-none focus:ring-2 focus:ring-brand-500/60
+           focus:border-brand-500/60;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-ink-800/70 px-2.5 py-1 text-xs text-ink-200;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(148, 163, 184, 0.25);
+    border-radius: 9999px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
