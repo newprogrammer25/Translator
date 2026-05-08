@@ -1,4 +1,4 @@
-"""FastAPI entry point for the SayMi-style translator backend (Gemini-powered).
+"""FastAPI entry point for the SayMi-style translator backend (Groq-powered).
 
 The CORS middleware below is required for the deployed frontend to reach this
 service from any origin. Do not remove it.
@@ -19,13 +19,12 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from google.genai import types
 
 from .config import get_settings
-from .gemini_client import (
+from .groq_client import (
     build_dialogue_system,
     build_translation_system,
-    history_to_contents,
+    history_to_messages,
     language_label,
     stream_text,
 )
@@ -41,7 +40,7 @@ from .schemas import (
 logger = logging.getLogger("translator")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="SayMi-style Translator API", version="0.2.0")
+app = FastAPI(title="SayMi-style Translator API", version="0.3.0")
 
 settings = get_settings()
 
@@ -56,7 +55,7 @@ app.add_middleware(
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(has_api_key=bool(settings.gemini_api_key))
+    return HealthResponse(has_api_key=bool(settings.groq_api_key))
 
 
 @app.get("/api/languages", response_model=LanguagesResponse)
@@ -76,8 +75,7 @@ def _sse(event: str, data: dict | str) -> bytes:
 
 async def _sse_stream(
     *,
-    contents: list[types.Content] | str,
-    system_instruction: str,
+    messages: list[dict[str, str]],
     temperature: float,
 ) -> AsyncIterator[bytes]:
     """Wrap :func:`stream_text` as Server-Sent Events.
@@ -86,25 +84,24 @@ async def _sse_stream(
     finishes, and ``event: error`` if anything goes wrong.
     """
     try:
-        async for piece in stream_text(
-            contents=contents,
-            system_instruction=system_instruction,
-            temperature=temperature,
-        ):
+        async for piece in stream_text(messages=messages, temperature=temperature):
             yield _sse("delta", {"content": piece})
         yield _sse("done", {})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("gemini stream failed")
+        logger.exception("groq stream failed")
         yield _sse("error", {"message": str(exc)})
 
 
 @app.post("/api/translate")
 async def translate(req: TranslateRequest) -> StreamingResponse:
-    if not settings.gemini_api_key:
-        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
+    if not settings.groq_api_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured")
     system = build_translation_system(req.source, req.target, formal=req.formal)
+    messages = history_to_messages(
+        [{"role": "user", "content": req.text}], system=system
+    )
     return StreamingResponse(
-        _sse_stream(contents=req.text, system_instruction=system, temperature=0.2),
+        _sse_stream(messages=messages, temperature=0.2),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -112,17 +109,17 @@ async def translate(req: TranslateRequest) -> StreamingResponse:
 
 @app.post("/api/dialogue")
 async def dialogue(req: DialogueRequest) -> StreamingResponse:
-    if not settings.gemini_api_key:
-        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
+    if not settings.groq_api_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured")
     history = [{"role": m.role, "content": m.content} for m in req.messages]
-    contents = history_to_contents(history)
     system = build_dialogue_system(
         bot_language=req.bot_language,
         user_language=req.user_language,
         persona=req.persona,
     )
+    messages = history_to_messages(history, system=system)
     return StreamingResponse(
-        _sse_stream(contents=contents, system_instruction=system, temperature=0.7),
+        _sse_stream(messages=messages, temperature=0.7),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -143,8 +140,8 @@ async def call_socket(ws: WebSocket) -> None:
       - ``{"type": "pong"}``
     """
     await ws.accept()
-    if not settings.gemini_api_key:
-        await ws.send_json({"type": "error", "id": "init", "message": "GEMINI_API_KEY missing"})
+    if not settings.groq_api_key:
+        await ws.send_json({"type": "error", "id": "init", "message": "GROQ_API_KEY missing"})
         await ws.close()
         return
 
@@ -157,10 +154,9 @@ async def call_socket(ws: WebSocket) -> None:
         target = str(msg.get("target", "en-US"))
         formal = bool(msg.get("formal", False))
         system = build_translation_system(source, target, formal=formal)
+        messages = history_to_messages([{"role": "user", "content": text}], system=system)
         try:
-            async for piece in stream_text(
-                contents=text, system_instruction=system, temperature=0.2
-            ):
+            async for piece in stream_text(messages=messages, temperature=0.2):
                 await ws.send_json({"type": "delta", "id": msg_id, "content": piece})
             await ws.send_json({"type": "done", "id": msg_id})
         except Exception as exc:  # noqa: BLE001

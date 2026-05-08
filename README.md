@@ -15,14 +15,14 @@ A SayMi-style AI translator — no headphones, no Bluetooth, just a fast web app
 
 ```
 apps/
-  server/   # FastAPI + Google Gemini (gemini-2.0-flash) — streaming SSE + WebSocket
+  server/   # FastAPI + Groq (llama-3.3-70b-versatile) — streaming SSE + WebSocket
   web/      # Vite + React + TypeScript + Tailwind, lazy-loaded mode bundles
 ```
 
 ### Latency & smoothness optimizations
 - Browser-side `SpeechRecognition` for instant partial transcripts (no audio round-trip)
 - Browser-side `speechSynthesis` for TTS (zero network latency, offline)
-- Streaming SSE for translation/dialogue — first token in ~150–300 ms on `gemini-2.0-flash`
+- Streaming SSE for translation/dialogue — first token in ~80–200 ms on Groq's LPU (300+ tokens/s)
 - Single WebSocket per call session — concurrent translations of both speakers
 - `requestAnimationFrame` batching of streaming chunks: re-renders cap at 60–120 Hz
 - `React.memo` for chat bubbles & call utterances — only the streaming row re-renders
@@ -36,7 +36,7 @@ apps/
 ```bash
 cd apps/server
 poetry install
-cp .env.example .env  # add GEMINI_API_KEY (https://aistudio.google.com/app/apikey)
+cp .env.example .env  # add GROQ_API_KEY (https://console.groq.com/keys)
 poetry run uvicorn app.main:app --reload
 ```
 
@@ -66,8 +66,8 @@ docker build -t translator-server apps/server
 
 | Var | Default | Description |
 | --- | ------- | ----------- |
-| `GEMINI_API_KEY`   | _(required)_ | Google Gemini API key (AI Studio) |
-| `GEMINI_MODEL`     | `gemini-2.0-flash` | Gemini model used for translation & dialogue |
+| `GROQ_API_KEY`     | _(required)_ | Groq API key (https://console.groq.com/keys) |
+| `GROQ_MODEL`       | `llama-3.3-70b-versatile` | Groq model used for translation & dialogue |
 | `ALLOWED_ORIGINS`  | `*`           | Comma-separated CORS origins |
 | `VITE_API_BASE`    | `""`          | Frontend → backend base URL (defaults to same origin / Vite proxy) |
 

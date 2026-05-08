@@ -4,7 +4,7 @@
 # Steps:
 #   1. Push this repo to GitHub.
 #   2. In Render: New + → Blueprint → connect this repo → Apply.
-#   3. Set GEMINI_API_KEY in the service env (the Blueprint marks it sync:false
+#   3. Set GROQ_API_KEY in the service env (the Blueprint marks it sync:false
 #      so Render will prompt you for it during apply).
 #
 # The frontend is hosted as a separate static site; once the backend URL
@@ -19,9 +19,9 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:
-      - key: GEMINI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
       - key: ALLOWED_ORIGINS
         value: "*"

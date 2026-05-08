@@ -1,24 +1,29 @@
-"""Lazy Google Gemini client + helper builders."""
+"""Lazy Groq client + helper builders.
+
+Groq exposes an OpenAI-compatible chat completions API and serves Llama-3.3-70B
+on their own LPU hardware, which gives us very fast streaming (300+ tokens/s).
+We keep the surface area small and OpenAI-shaped so swapping providers later
+is straightforward.
+"""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from functools import lru_cache
 
-from google import genai
-from google.genai import types
+from groq import AsyncGroq
 
 from .config import get_settings
 
 
 @lru_cache
-def get_client() -> genai.Client:
+def get_client() -> AsyncGroq:
     settings = get_settings()
-    if not settings.gemini_api_key:
+    if not settings.groq_api_key:
         raise RuntimeError(
-            "GEMINI_API_KEY is not configured. Set it in the environment or .env file."
+            "GROQ_API_KEY is not configured. Set it in the environment or .env file."
         )
-    return genai.Client(api_key=settings.gemini_api_key)
+    return AsyncGroq(api_key=settings.groq_api_key)
 
 
 def language_label(code: str) -> str:
@@ -57,41 +62,43 @@ def build_dialogue_system(
     )
 
 
-def history_to_contents(history: list[dict[str, str]]) -> list[types.Content]:
-    """Convert OpenAI-style history into Gemini ``Content`` objects.
+def history_to_messages(
+    history: list[dict[str, str]], *, system: str
+) -> list[dict[str, str]]:
+    """Build an OpenAI-style chat ``messages`` array.
 
-    Gemini uses ``user`` and ``model`` roles; we map ``assistant`` -> ``model``.
+    The ``system`` instruction is prepended; ``history`` items keep their
+    ``role`` (``user`` / ``assistant``) and ``content``.
     """
-    contents: list[types.Content] = []
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     for msg in history:
         role = msg.get("role", "user")
-        gemini_role = "model" if role == "assistant" else "user"
-        text = msg.get("content", "")
-        contents.append(
-            types.Content(role=gemini_role, parts=[types.Part.from_text(text=text)])
-        )
-    return contents
+        if role not in ("user", "assistant"):
+            role = "user"
+        messages.append({"role": role, "content": msg.get("content", "")})
+    return messages
 
 
 async def stream_text(
     *,
-    contents: list[types.Content] | str,
-    system_instruction: str,
+    messages: list[dict[str, str]],
     temperature: float = 0.2,
     model: str | None = None,
 ) -> AsyncIterator[str]:
-    """Stream text deltas from Gemini ``generate_content_stream``."""
+    """Stream content deltas from Groq's chat completion endpoint."""
     client = get_client()
     settings = get_settings()
-    chosen = model or settings.gemini_model
-    response = await client.aio.models.generate_content_stream(
+    chosen = model or settings.groq_model
+    stream = await client.chat.completions.create(
         model=chosen,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=temperature,
-        ),
+        messages=messages,  # type: ignore[arg-type]
+        temperature=temperature,
+        stream=True,
     )
-    async for chunk in response:
-        if chunk.text:
-            yield chunk.text
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        piece = getattr(delta, "content", None)
+        if piece:
+            yield piece
