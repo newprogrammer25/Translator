@@ -9,6 +9,11 @@ interface Props {
   ariaLabel?: string;
 }
 
+/**
+ * Premium pill-style language picker. Keeps a real `<select>` so the native OS
+ * picker appears on mobile (much better UX on iOS/Android than a custom
+ * dropdown) but styles it as a glassy pill with chevron.
+ */
 export function LanguageSelect({
   value,
   onChange,
@@ -23,12 +28,10 @@ export function LanguageSelect({
       aria-label={ariaLabel}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`bg-ink-900/80 border border-ink-700 rounded-lg px-3 py-2 text-sm
-        text-ink-100 focus:outline-none focus:ring-2 focus:ring-brand-500/60 focus:border-brand-500/60
-        appearance-none ${className ?? ""}`}
+      className={`select-pill ${className ?? ""}`}
     >
       {list.map((lang) => (
-        <option key={lang.code} value={lang.code} className="bg-ink-900">
+        <option key={lang.code} value={lang.code}>
           {lang.flag} {lang.native}
         </option>
       ))}

@@ -38,10 +38,22 @@ def build_translation_system(source: str, target: str, *, formal: bool = False) 
     """System instruction asking the model to output ONLY the translated text."""
     src_label = "the source language" if source in ("auto", "") else language_label(source)
     tgt_label = language_label(target)
-    tone = "formal" if formal else "natural, conversational"
+    if formal:
+        tone_clause = (
+            "Use a STRICTLY FORMAL register. In languages with a T-V distinction, ALWAYS "
+            "use the formal pronouns and corresponding verb conjugations: Spanish 'usted' / "
+            "'ustedes' with third-person verbs (e.g. 'puede', 'tiene', 'pod\u00edo'/'podr\u00eda'); "
+            "French 'vous'; German 'Sie'; Russian '\u0412\u044b' / '\u0412\u0430\u0441'; "
+            "Italian 'Lei'; Portuguese 'voc\u00ea' / formal address. Avoid contractions, "
+            "slang, and casual interjections."
+        )
+    else:
+        tone_clause = (
+            "Use a natural, conversational register that matches the source tone."
+        )
     return (
         f"You are a professional translator. Translate the user's message from "
-        f"{src_label} into {tgt_label}. Use a {tone} register. "
+        f"{src_label} into {tgt_label}. {tone_clause} "
         "Preserve meaning, idioms, and emotion. "
         "Output ONLY the translation \u2014 no quotes, no explanations, no language labels, "
         "no transliteration."

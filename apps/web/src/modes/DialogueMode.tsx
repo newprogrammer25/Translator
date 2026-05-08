@@ -1,6 +1,5 @@
 import { Languages, Mic, Send, Sparkles, Volume2 } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { HealthBadge } from "../components/HealthBadge";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { useLanguages } from "../hooks/useLanguages";
 import { useTTS } from "../hooks/useTTS";
@@ -220,57 +219,58 @@ export function DialogueMode() {
   };
 
   return (
-    <div className="flex flex-col gap-4 animate-fade-in">
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">AI Dialogue</h1>
-          <p className="text-xs text-ink-400">Practice or chat — replies appear with translation.</p>
-        </div>
-        <HealthBadge />
+    <div className="flex flex-col gap-6 animate-fade-up">
+      {/* Hero */}
+      <header className="flex flex-col gap-2">
+        <span className="label-eyebrow">AI Dialogue</span>
+        <h1 className="heading-display text-[34px] sm:text-[40px] lg:text-[52px] leading-[1.05]">
+          Practice with{" "}
+          <span className="bg-clip-text text-transparent bg-brand-grad">
+            an AI partner.
+          </span>
+        </h1>
+        <p className="text-ink-400 max-w-xl text-[15px] leading-relaxed">
+          Pick a persona, two languages, and chat — replies stream live and come
+          with a translation underneath.
+        </p>
       </header>
 
-      <div className="card p-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] uppercase tracking-wide text-ink-400 w-12">You</span>
-          <LanguageSelect
-            value={prefs.userLanguage}
-            onChange={(code) => setPrefs((p) => ({ ...p, userLanguage: code }))}
-            languages={languages}
-            ariaLabel="Your language"
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] uppercase tracking-wide text-ink-400 w-12">AI</span>
-          <LanguageSelect
-            value={prefs.botLanguage}
-            onChange={(code) => setPrefs((p) => ({ ...p, botLanguage: code }))}
-            languages={languages}
-            excludeAuto
-            ariaLabel="Bot language"
-            className="flex-1"
-          />
-        </div>
+      {/* Controls row: languages + persona pill. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        <LangPill label="You" value={prefs.userLanguage} onChange={(code) => setPrefs((p) => ({ ...p, userLanguage: code }))} languages={languages} />
+        <LangPill label="AI" value={prefs.botLanguage} onChange={(code) => setPrefs((p) => ({ ...p, botLanguage: code }))} languages={languages} excludeAuto />
         <select
           aria-label="Persona"
           value={prefs.persona}
           onChange={(e) => setPrefs((p) => ({ ...p, persona: e.target.value }))}
-          className="bg-ink-900/80 border border-ink-700 rounded-lg px-3 py-2 text-sm text-ink-100"
+          className="select-pill"
         >
           {PERSONAS.map((p) => (
-            <option key={p.label} value={p.id} className="bg-ink-900">
+            <option key={p.label} value={p.id}>
               {p.label}
             </option>
           ))}
         </select>
       </div>
 
-      <div className="card flex flex-col h-[60vh] min-h-[320px]">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
+      {/* Chat surface */}
+      <div className="surface flex flex-col h-[64dvh] sm:h-[60vh] min-h-[360px] overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 sm:py-6 space-y-4 smooth-scroll scrollbar-thin"
+        >
           {turns.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-ink-500 text-sm gap-2">
-              <Sparkles className="w-6 h-6 text-brand-400" />
-              Start the conversation with a message or the mic.
+            <div className="flex flex-col items-center justify-center h-full text-ink-400 text-sm gap-3 text-center px-6">
+              <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-grad text-canvas-950 shadow-glow-teal">
+                <Sparkles className="w-5 h-5" />
+              </span>
+              <div className="font-display text-lg text-white tracking-tight">
+                Start the conversation
+              </div>
+              <p className="max-w-sm text-ink-400">
+                Type a message below, or tap the microphone to speak. Try
+                "Order coffee in Spanish" or "Quiz me on French verbs."
+              </p>
             </div>
           ) : (
             turns.map((turn, idx) => (
@@ -278,22 +278,27 @@ export function DialogueMode() {
                 key={idx}
                 turn={turn}
                 onSpeak={() => {
-                  if (turn.role === "assistant") void speak(turn.content, { lang: prefs.botLanguage });
+                  if (turn.role === "assistant")
+                    void speak(turn.content, { lang: prefs.botLanguage });
                   else void speak(turn.content, { lang: prefs.userLanguage });
                 }}
               />
             ))
           )}
         </div>
-        <div className="border-t border-ink-800 p-3 flex items-end gap-2">
+
+        {/* Composer */}
+        <div className="border-t border-white/[0.05] bg-canvas-900/40 backdrop-blur-md px-3 sm:px-4 py-3 flex items-end gap-2">
           <button
             type="button"
             onClick={recording ? stopRecognition : startMic}
             disabled={!supportsSpeech}
-            aria-label={recording ? "Stop recording" : "Start recording"}
-            className={`btn-icon ${
-              recording ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/40" : ""
-            }`}
+            aria-label={recording ? "Stop recording" : "Start voice input"}
+            className={`shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-2xl ring-1 transition ${
+              recording
+                ? "bg-rose-500/15 text-rose-300 ring-rose-400/40 animate-pulse-soft"
+                : "bg-white/[0.04] text-ink-300 ring-white/[0.06] hover:text-white hover:bg-white/[0.07]"
+            } disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             <Mic className="w-4 h-4" />
           </button>
@@ -308,13 +313,14 @@ export function DialogueMode() {
             }}
             placeholder="Message…"
             rows={1}
-            className="input resize-none max-h-32"
+            className="field flex-1 resize-none max-h-32 px-3 py-2.5 rounded-2xl bg-white/[0.03] ring-1 ring-white/[0.05] focus:ring-teal-400/40"
           />
           <button
             type="button"
             onClick={() => void send(input)}
             disabled={!input.trim() || loading}
-            className="btn-primary"
+            className="btn-primary shrink-0 h-11 disabled:opacity-50"
+            aria-label="Send"
           >
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline">Send</span>
@@ -322,34 +328,93 @@ export function DialogueMode() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between text-xs text-ink-400">
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={prefs.autoSpeak}
-              onChange={(e) => setPrefs((p) => ({ ...p, autoSpeak: e.target.checked }))}
-              className="accent-brand-500"
-            />
-            Speak replies
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={prefs.showTranslation}
-              onChange={(e) => setPrefs((p) => ({ ...p, showTranslation: e.target.checked }))}
-              className="accent-brand-500"
-            />
-            Show translation
-          </label>
+      {/* Toggles row */}
+      <div className="flex items-center justify-between gap-3 flex-wrap text-sm text-ink-300">
+        <div className="flex items-center gap-4 flex-wrap">
+          <Toggle
+            checked={prefs.autoSpeak}
+            onChange={(v) => setPrefs((p) => ({ ...p, autoSpeak: v }))}
+            label="Speak replies"
+          />
+          <Toggle
+            checked={prefs.showTranslation}
+            onChange={(v) => setPrefs((p) => ({ ...p, showTranslation: v }))}
+            label="Show translation"
+          />
         </div>
-        <button type="button" onClick={reset} className="btn-ghost text-xs">
+        <button type="button" onClick={reset} className="btn-ghost">
           Clear chat
         </button>
       </div>
 
-      {error ? <div className="text-xs text-red-400">{error}</div> : null}
+      {error ? (
+        <div className="text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/25 rounded-xl px-4 py-2">
+          {error}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function LangPill({
+  label,
+  value,
+  onChange,
+  languages,
+  excludeAuto,
+}: {
+  label: string;
+  value: string;
+  onChange: (code: string) => void;
+  languages: ReturnType<typeof useLanguages>;
+  excludeAuto?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-[0.18em] text-ink-500 font-medium">
+        {label}
+      </span>
+      <LanguageSelect
+        value={value}
+        onChange={onChange}
+        languages={languages}
+        excludeAuto={excludeAuto}
+        ariaLabel={`${label} language`}
+        className="!pl-12"
+      />
+    </div>
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex items-center gap-2.5 select-none cursor-pointer">
+      <span className="relative inline-flex">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="peer sr-only"
+        />
+        <span
+          aria-hidden
+          className="w-9 h-5 rounded-full bg-white/[0.08] ring-1 ring-white/[0.07] peer-checked:bg-brand-grad transition-colors duration-200"
+        />
+        <span
+          aria-hidden
+          className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"
+        />
+      </span>
+      {label}
+    </label>
   );
 }
 
@@ -371,32 +436,51 @@ const Bubble = memo(
 function BubbleImpl({ turn, onSpeak }: BubbleProps) {
   const isUser = turn.role === "user";
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`flex animate-fade-up ${isUser ? "justify-end" : "justify-start"}`}
+      style={{ animationDuration: "240ms" }}
+    >
       <div
-        className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm shadow ${
+        className={`max-w-[88%] sm:max-w-[78%] px-4 py-2.5 text-[15px] leading-relaxed ${
           isUser
-            ? "bg-brand-500 text-ink-950"
-            : "bg-ink-800/80 text-ink-100 ring-1 ring-ink-700"
+            ? "rounded-[20px] rounded-br-md bg-brand-grad text-canvas-950 shadow-glow-teal"
+            : "rounded-[20px] rounded-bl-md bg-white/[0.04] text-ink-100 ring-1 ring-white/[0.06] backdrop-blur-md"
         }`}
       >
-        <div className="whitespace-pre-wrap leading-relaxed">{turn.content || "…"}</div>
+        <div className="whitespace-pre-wrap stream-pane">
+          {turn.content || (
+            <span className="inline-flex items-center gap-1 text-ink-400">
+              <span className="inline-block w-1 h-1 rounded-full bg-current animate-pulse" />
+              <span
+                className="inline-block w-1 h-1 rounded-full bg-current animate-pulse"
+                style={{ animationDelay: "120ms" }}
+              />
+              <span
+                className="inline-block w-1 h-1 rounded-full bg-current animate-pulse"
+                style={{ animationDelay: "240ms" }}
+              />
+            </span>
+          )}
+        </div>
         {turn.translation ? (
           <div
-            className={`mt-1.5 pt-1.5 text-[11px] italic border-t ${
-              isUser ? "text-ink-900/70 border-ink-950/30" : "text-ink-400 border-ink-700"
-            } flex items-start gap-1.5`}
+            className={`mt-2 pt-2 text-[12px] italic flex items-start gap-1.5 border-t ${
+              isUser ? "text-canvas-900/70 border-canvas-950/15" : "text-ink-400 border-white/[0.06]"
+            }`}
           >
-            <Languages className="w-3 h-3 mt-0.5 shrink-0" />
+            <Languages className="w-3 h-3 mt-0.5 shrink-0 opacity-80" />
             <span className="whitespace-pre-wrap">{turn.translation}</span>
           </div>
         ) : null}
         {turn.content ? (
-          <div className={`mt-1 -mb-1 ${isUser ? "text-right" : "text-left"}`}>
+          <div className={`mt-1.5 -mb-1 ${isUser ? "text-right" : "text-left"}`}>
             <button
               type="button"
               onClick={onSpeak}
-              className={`text-[11px] inline-flex items-center gap-1 ${
-                isUser ? "text-ink-900/70 hover:text-ink-900" : "text-ink-400 hover:text-ink-200"
+              className={`text-[11px] inline-flex items-center gap-1 transition-colors ${
+                isUser
+                  ? "text-canvas-900/70 hover:text-canvas-950"
+                  : "text-ink-400 hover:text-white"
               }`}
               aria-label="Play"
             >
