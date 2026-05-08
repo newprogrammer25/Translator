@@ -1,4 +1,4 @@
-import { Mic, MicOff } from "lucide-react";
+import { Mic, Square } from "lucide-react";
 
 interface Props {
   recording: boolean;
@@ -8,9 +8,21 @@ interface Props {
   size?: "md" | "lg";
 }
 
-export function RecordButton({ recording, onStart, onStop, disabled, size = "lg" }: Props) {
-  const dim = size === "lg" ? "w-20 h-20" : "w-14 h-14";
-  const iconDim = size === "lg" ? "w-8 h-8" : "w-6 h-6";
+/**
+ * Premium record FAB. Idle state = brand gradient with halo glow; recording
+ * state = warm rose with double soft-pulse halo. Sized for thumb taps on
+ * mobile.
+ */
+export function RecordButton({
+  recording,
+  onStart,
+  onStop,
+  disabled,
+  size = "lg",
+}: Props) {
+  const dim = size === "lg" ? "w-[88px] h-[88px]" : "w-14 h-14";
+  const iconDim = size === "lg" ? "w-7 h-7" : "w-6 h-6";
+
   return (
     <button
       type="button"
@@ -18,15 +30,32 @@ export function RecordButton({ recording, onStart, onStop, disabled, size = "lg"
       disabled={disabled}
       aria-label={recording ? "Stop recording" : "Start recording"}
       aria-pressed={recording}
-      className={`${dim} rounded-full flex items-center justify-center transition shadow-xl
-        ${
-          recording
-            ? "bg-red-500 text-white shadow-red-500/40 animate-pulse-soft"
-            : "bg-brand-500 text-ink-950 hover:bg-brand-400 shadow-brand-500/40"
-        }
-        disabled:opacity-50 disabled:cursor-not-allowed active:scale-95`}
+      className={`fab ${dim} relative`}
     >
-      {recording ? <MicOff className={iconDim} /> : <Mic className={iconDim} />}
+      {/* Halo rings (recording = animated; idle = subtle teal glow). */}
+      <span
+        aria-hidden
+        className={`absolute inset-0 rounded-full transition duration-300 ease-premium ${
+          recording
+            ? "bg-rose-500/20 ring-2 ring-rose-400/50 animate-ping"
+            : "bg-teal-500/0 ring-1 ring-white/[0.06]"
+        }`}
+      />
+      <span
+        aria-hidden
+        className={`absolute inset-1.5 rounded-full transition duration-300 ${
+          recording
+            ? "bg-rose-500 shadow-[0_22px_60px_-18px_rgba(244,63,94,0.7)]"
+            : "bg-brand-grad shadow-glow-teal"
+        }`}
+      />
+      <span
+        className={`relative inline-flex items-center justify-center text-canvas-950 ${
+          recording ? "text-white" : ""
+        }`}
+      >
+        {recording ? <Square className={iconDim} /> : <Mic className={iconDim} />}
+      </span>
     </button>
   );
 }

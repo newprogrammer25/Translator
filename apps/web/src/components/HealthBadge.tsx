@@ -3,20 +3,19 @@ import { fetchHealth } from "../lib/api";
 
 type Status = "checking" | "ok" | "no-key" | "error";
 
-const TEXT: Record<Status, string> = {
-  checking: "Checking…",
-  ok: "Connected",
-  "no-key": "API key missing",
+const LABEL: Record<Status, string> = {
+  checking: "Checking backend connection",
+  ok: "Backend connected",
+  "no-key": "Backend missing API key",
   error: "Backend unreachable",
 };
 
-const COLOR: Record<Status, string> = {
-  checking: "bg-ink-500/20 text-ink-300",
-  ok: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30",
-  "no-key": "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30",
-  error: "bg-red-500/15 text-red-300 ring-1 ring-red-500/30",
-};
-
+/**
+ * Edge-light health indicator. Replaces the old "Connected" chip in the topbar
+ * with a hairline gradient bar across the very top of the viewport. Visually
+ * disappears when healthy (a faint teal sheen), turns warm amber if the API
+ * key is missing, red if the backend is unreachable.
+ */
 export function HealthBadge() {
   const [status, setStatus] = useState<Status>("checking");
   useEffect(() => {
@@ -33,10 +32,24 @@ export function HealthBadge() {
       cancelled = true;
     };
   }, []);
+
+  const tone =
+    status === "ok"
+      ? "from-teal-400/0 via-teal-300/60 to-violet-400/0"
+      : status === "no-key"
+      ? "from-amber-400/0 via-amber-300/80 to-amber-400/0"
+      : status === "error"
+      ? "from-rose-500/0 via-rose-400/80 to-rose-500/0"
+      : "from-ink-500/0 via-ink-400/40 to-ink-500/0";
+
   return (
-    <span className={`text-[11px] inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${COLOR[status]}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {TEXT[status]}
-    </span>
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label={LABEL[status]}
+      className="pointer-events-none fixed inset-x-0 top-0 z-50 h-[2px]"
+    >
+      <div className={`h-full w-full bg-gradient-to-r ${tone}`} />
+    </div>
   );
 }

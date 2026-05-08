@@ -73,6 +73,28 @@ def _sse(event: str, data: dict | str) -> bytes:
     return f"event: {event}\ndata: {payload}\n\n".encode()
 
 
+# 2 KB of whitespace shipped as an SSE comment at the very start of every
+# stream.  Some HTTP/2 reverse proxies (Render's free tier among them) hold
+# small response chunks in an internal buffer until either the buffer fills or
+# the response ends; in that mode the browser only sees the deltas after the
+# Groq stream has fully completed, which kills the "feels instant" UX.  Dumping
+# 2 KB up front forces the proxy to commit and switch to streaming mode, while
+# being a valid SSE comment that browsers happily ignore.
+_SSE_PRELUDE: bytes = b": " + (b" " * 2048) + b"\n\n"
+
+# Headers asking every layer between FastAPI and the browser to stop buffering
+# or transforming the response.  ``X-Accel-Buffering`` is the nginx directive
+# (Render's edge respects it); ``Content-Encoding: identity`` blocks any
+# opportunistic gzip middlebox; ``Cache-Control: no-transform`` blocks CDNs
+# from coalescing chunks.
+_STREAM_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    "Content-Encoding": "identity",
+    "Connection": "keep-alive",
+}
+
+
 async def _sse_stream(
     *,
     messages: list[dict[str, str]],
@@ -83,6 +105,7 @@ async def _sse_stream(
     Emits ``event: delta`` for each token chunk, ``event: done`` when the model
     finishes, and ``event: error`` if anything goes wrong.
     """
+    yield _SSE_PRELUDE
     try:
         async for piece in stream_text(messages=messages, temperature=temperature):
             yield _sse("delta", {"content": piece})
@@ -103,7 +126,7 @@ async def translate(req: TranslateRequest) -> StreamingResponse:
     return StreamingResponse(
         _sse_stream(messages=messages, temperature=0.2),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=_STREAM_HEADERS,
     )
 
 
@@ -121,7 +144,7 @@ async def dialogue(req: DialogueRequest) -> StreamingResponse:
     return StreamingResponse(
         _sse_stream(messages=messages, temperature=0.7),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=_STREAM_HEADERS,
     )
 
 
