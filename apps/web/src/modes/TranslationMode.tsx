@@ -77,13 +77,16 @@ export function TranslationMode() {
   // and we suppress single-character pings to avoid useless requests.
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    if (input.trim().length < 2) {
+    const trimmed = input.trim();
+    if (trimmed.length < 2) {
+      abortRef.current?.abort();
       out.reset();
       setLoading(false);
+      setError(null);
       return;
     }
     debounceRef.current = window.setTimeout(() => {
-      void run(input);
+      void run(trimmed);
     }, 600);
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);

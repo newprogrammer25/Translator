@@ -1,6 +1,5 @@
 import { ArrowDownUp, Mic, MicOff, Phone, PhoneOff, Volume2 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { HealthBadge } from "../components/HealthBadge";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { useLanguages } from "../hooks/useLanguages";
 import { useTTS } from "../hooks/useTTS";
@@ -214,27 +213,31 @@ export function CallMode() {
   );
 
   return (
-    <div className="flex flex-col gap-4 animate-fade-in">
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Call Translation</h1>
-          <p className="text-xs text-ink-400">
-            Two people, two languages — pass the device or use one mic each.
-          </p>
-        </div>
-        <HealthBadge />
+    <div className="flex flex-col gap-8 animate-fade-up">
+      <header className="flex flex-col gap-2">
+        <span className="label-eyebrow">Call translation</span>
+        <h1 className="heading-display text-[34px] sm:text-[40px] lg:text-[52px] leading-[1.05]">
+          Two voices.{" "}
+          <span className="bg-clip-text text-transparent bg-brand-grad">
+            One shared interpreter.
+          </span>
+        </h1>
+        <p className="text-ink-400 max-w-xl text-[15px] leading-relaxed">
+          Pass the device between speakers or place it in the middle — each side
+          gets an independent mic, language, and streamed response.
+        </p>
       </header>
 
-      <div className="card p-3 flex items-center justify-between gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-3">
         <LanguageSelect
           value={prefs.langA}
           onChange={(code) => setPrefs((p) => ({ ...p, langA: code }))}
           languages={languages}
           excludeAuto
           ariaLabel="Person A language"
-          className="flex-1 min-w-0"
+          className="min-w-0"
         />
-        <button type="button" onClick={swapLanguages} className="btn-icon" aria-label="Swap">
+        <button type="button" onClick={swapLanguages} className="icon-btn" aria-label="Swap languages">
           <ArrowDownUp className="w-4 h-4" />
         </button>
         <LanguageSelect
@@ -243,11 +246,11 @@ export function CallMode() {
           languages={languages}
           excludeAuto
           ariaLabel="Person B language"
-          className="flex-1 min-w-0"
+          className="min-w-0"
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)] lg:gap-6">
         <SpeakerColumn
           speaker="A"
           lang={prefs.langA}
@@ -272,47 +275,55 @@ export function CallMode() {
         />
       </div>
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          {connected ? (
-            <button type="button" onClick={disconnect} className="btn bg-red-500 text-white hover:bg-red-400">
-              <PhoneOff className="w-4 h-4" /> End call
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={connect}
-              disabled={connecting}
-              className="btn-primary"
-            >
-              <Phone className="w-4 h-4" /> {connecting ? "Connecting…" : "Start call"}
-            </button>
-          )}
-          <span
-            className={`chip ${
-              connected ? "ring-1 ring-emerald-500/40 text-emerald-300" : "text-ink-400"
-            }`}
-          >
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                connected ? "bg-emerald-400" : "bg-ink-500"
-              }`}
-            />
-            {connected ? "Live" : "Idle"}
-          </span>
+      <div className="sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-1 rounded-[28px] border border-white/[0.06] bg-canvas-950/80 px-4 py-3 shadow-glow backdrop-blur-2xl lg:static lg:mx-0 lg:bg-transparent lg:shadow-none lg:backdrop-blur-none">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            {connected ? (
+              <button type="button" onClick={disconnect} className="btn-danger">
+                <PhoneOff className="w-4 h-4" /> End call
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={connect}
+                disabled={connecting}
+                className="btn-primary"
+              >
+                <Phone className="w-4 h-4" /> {connecting ? "Connecting…" : "Start call"}
+              </button>
+            )}
+            <span className={`pill ${connected ? "text-teal-200" : "text-ink-400"}`}>
+              <span className={`h-2 w-2 rounded-full ${connected ? "bg-teal-300" : "bg-ink-500"}`} />
+              {connected ? "Live" : "Idle"}
+            </span>
+          </div>
+          <label className="flex items-center gap-2.5 select-none cursor-pointer text-sm text-ink-300">
+            <span className="relative inline-flex">
+              <input
+                type="checkbox"
+                checked={prefs.autoSpeak}
+                onChange={(e) => setPrefs((p) => ({ ...p, autoSpeak: e.target.checked }))}
+                className="peer sr-only"
+              />
+              <span
+                aria-hidden
+                className="w-9 h-5 rounded-full bg-white/[0.08] ring-1 ring-white/[0.07] peer-checked:bg-brand-grad transition-colors duration-200"
+              />
+              <span
+                aria-hidden
+                className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"
+              />
+            </span>
+            Speak translations aloud
+          </label>
         </div>
-        <label className="flex items-center gap-2 text-xs text-ink-300 select-none">
-          <input
-            type="checkbox"
-            checked={prefs.autoSpeak}
-            onChange={(e) => setPrefs((p) => ({ ...p, autoSpeak: e.target.checked }))}
-            className="accent-brand-500"
-          />
-          Auto-speak translation
-        </label>
       </div>
 
-      {error ? <div className="text-xs text-red-400">{error}</div> : null}
+      {error ? (
+        <div className="text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/25 rounded-xl px-4 py-2">
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -329,8 +340,6 @@ interface SpeakerColumnProps {
   disabled?: boolean;
 }
 
-// Memoize: when one utterance updates we only want that row to re-render,
-// not all sibling rows on the same speaker side.
 interface UtteranceItemProps {
   utterance: CallUtterance;
   onPlay: (text: string) => void;
@@ -339,17 +348,17 @@ interface UtteranceItemProps {
 const UtteranceItem = memo(
   function UtteranceItem({ utterance: u, onPlay }: UtteranceItemProps) {
     return (
-      <div className="bg-ink-900/50 rounded-xl p-3 space-y-1.5 stream-pane">
-        <div className="text-sm text-ink-200">{u.original}</div>
-        <div className="text-sm text-brand-200 flex items-start gap-1.5">
-          <span className="flex-1 whitespace-pre-wrap">
+      <div className="stream-pane rounded-2xl bg-white/[0.04] p-3.5 ring-1 ring-white/[0.06] space-y-2">
+        <div className="text-sm leading-6 text-ink-100">{u.original}</div>
+        <div className="flex items-start gap-2 text-sm leading-6 text-teal-200">
+          <span className={`flex-1 whitespace-pre-wrap ${!u.done ? "typing-caret" : ""}`}>
             {u.translation || (u.done ? "…" : "translating…")}
           </span>
           {u.translation ? (
             <button
               type="button"
               onClick={() => onPlay(u.translation)}
-              className="btn-icon w-7 h-7"
+              className="icon-btn h-8 w-8 shrink-0"
               aria-label="Play translation"
             >
               <Volume2 className="w-3.5 h-3.5" />
@@ -377,38 +386,56 @@ function SpeakerColumn({
   onPlay,
   disabled,
 }: SpeakerColumnProps) {
-  const accent = speaker === "A" ? "ring-brand-500/30" : "ring-emerald-500/30";
   const tag = speaker === "A" ? "Person A" : "Person B";
+  const aside = speaker === "B" ? "lg:mt-12" : "";
   return (
-    <div className={`card p-4 flex flex-col gap-3 ring-1 ${accent} min-h-[280px]`}>
-      <div className="flex items-center justify-between text-xs text-ink-400">
-        <span className="uppercase tracking-wide">{tag}</span>
-        <span className="chip">{lang} → {targetLang}</span>
+    <section className={`surface relative flex min-h-[48dvh] flex-col gap-4 overflow-hidden px-5 py-5 lg:min-h-[520px] lg:px-7 lg:py-7 ${aside}`}>
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/60 to-transparent"
+      />
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="label-eyebrow">{tag}</p>
+          <p className="mt-2 font-display text-2xl font-semibold tracking-tight text-white">
+            {lang} → {targetLang}
+          </p>
+        </div>
+        <span className={`pill ${state.recording ? "text-rose-200" : "text-ink-400"}`}>
+          <span className={`h-2 w-2 rounded-full ${state.recording ? "bg-rose-300" : "bg-ink-500"}`} />
+          {state.recording ? "Listening" : "Ready"}
+        </span>
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto scrollbar-thin pr-1 max-h-[40vh]">
+
+      <div className="smooth-scroll flex-1 space-y-3 overflow-y-auto pr-1 scrollbar-thin">
         {utterances.length === 0 && !state.partial ? (
-          <div className="text-ink-500 text-sm py-6 text-center">No turns yet.</div>
+          <div className="flex h-full items-center justify-center text-center text-sm text-ink-500">
+            No turns yet. Tap the mic and start speaking.
+          </div>
         ) : null}
         {utterances.map((u) => (
           <UtteranceItem key={u.id} utterance={u} onPlay={onPlay} />
         ))}
         {state.partial ? (
-          <div className="bg-ink-900/30 rounded-xl p-3 italic text-ink-400 text-sm">{state.partial}</div>
+          <div className="rounded-2xl bg-white/[0.03] p-3 text-sm italic text-ink-400 ring-1 ring-white/[0.05]">
+            {state.partial}
+          </div>
         ) : null}
       </div>
+
       <button
         type="button"
         onClick={state.recording ? onStop : onStart}
         disabled={disabled}
-        className={`btn ${
+        className={`inline-flex min-h-14 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition duration-200 ease-premium active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 ${
           state.recording
-            ? "bg-red-500 text-white hover:bg-red-400 animate-pulse-soft"
-            : "bg-brand-500 text-ink-950 hover:bg-brand-400"
+            ? "bg-rose-500/90 text-white shadow-[0_18px_50px_-20px_rgba(244,63,94,0.7)] animate-pulse-soft"
+            : "bg-white/[0.06] text-white ring-1 ring-white/[0.08] hover:bg-white/[0.1]"
         }`}
       >
         {state.recording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-        {state.recording ? "Hold to stop" : `Talk as ${tag}`}
+        {state.recording ? "Stop" : `Talk as ${tag}`}
       </button>
-    </div>
+    </section>
   );
 }
