@@ -148,42 +148,129 @@ async def dialogue(req: DialogueRequest) -> StreamingResponse:
     )
 
 
-@app.websocket("/api/ws/call")
-async def call_socket(ws: WebSocket) -> None:
-    """Bidirectional channel for the call-translation mode.
+@app.post("/api/rooms/create")
+async def create_room() -> dict:
+    """Create a new call room and return the room ID."""
+    from .rooms import rooms
+    room = rooms.create_room()
+    return {"room_id": room.room_id}
 
-    Clients send JSON frames:
-      - ``{"type": "translate", "id": str, "text": str, "source": str, "target": str}``
-      - ``{"type": "ping"}``
 
-    Server emits JSON frames:
-      - ``{"type": "delta", "id": str, "content": str}``
-      - ``{"type": "done", "id": str}``
-      - ``{"type": "error", "id": str, "message": str}``
-      - ``{"type": "pong"}``
+@app.get("/api/rooms/{room_id}")
+async def get_room(room_id: str) -> dict:
+    """Check if a room exists and its current state."""
+    from .rooms import rooms
+    room = rooms.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return {"room_id": room.room_id, "peer_count": room.peer_count, "is_full": room.is_full}
+
+
+@app.websocket("/api/ws/room/{room_id}")
+async def room_socket(ws: WebSocket, room_id: str) -> None:
+    """WebSocket endpoint for a call room.
+
+    Handles:
+    - WebRTC signaling (offer, answer, ice-candidate) relayed to the other peer
+    - Translation requests (translate) streamed back to both peers as subtitles
+    - Language setting (set-language) to configure this peer's language
+    - Ping/pong keepalive
+
+    Client -> Server:
+      {"type": "join", "language": "en-US"}
+      {"type": "offer", "sdp": "..."}
+      {"type": "answer", "sdp": "..."}
+      {"type": "ice-candidate", "candidate": {...}}
+      {"type": "set-language", "language": "es-ES"}
+      {"type": "translate", "id": "...", "text": "...", "source": "...", "target": "..."}
+      {"type": "ping"}
+
+    Server -> Client:
+      {"type": "joined", "peer_id": "...", "peer_count": N}
+      {"type": "peer-joined", "peer_id": "...", "language": "..."}
+      {"type": "peer-left", "peer_id": "..."}
+      {"type": "offer", "sdp": "...", "from": "..."}
+      {"type": "answer", "sdp": "...", "from": "..."}
+      {"type": "ice-candidate", "candidate": {...}, "from": "..."}
+      {"type": "delta", "id": "...", "content": "...", "from": "..."}
+      {"type": "done", "id": "...", "from": "..."}
+      {"type": "error", "message": "..."}
+      {"type": "pong"}
     """
+    from .rooms import Peer, rooms
+
     await ws.accept()
-    if not settings.groq_api_key:
-        await ws.send_json({"type": "error", "id": "init", "message": "GROQ_API_KEY missing"})
+
+    room = rooms.get_room(room_id)
+    if not room:
+        await ws.send_json({"type": "error", "message": "Room not found"})
         await ws.close()
         return
 
+    if room.is_full:
+        await ws.send_json({"type": "error", "message": "Room is full"})
+        await ws.close()
+        return
+
+    # Generate peer ID
+    import secrets
+    peer_id = secrets.token_urlsafe(6)
+    peer = Peer(ws=ws)
+
+    if not rooms.add_peer(room_id, peer_id, peer):
+        await ws.send_json({"type": "error", "message": "Could not join room"})
+        await ws.close()
+        return
+
+    # Notify this peer
+    await ws.send_json({"type": "joined", "peer_id": peer_id, "peer_count": room.peer_count})
+
+    # Notify the other peer if present
+    other = room.other_peer(peer_id)
+    if other:
+        try:
+            await other.ws.send_json({"type": "peer-joined", "peer_id": peer_id, "language": peer.language})
+        except Exception:
+            pass
+        # Also tell this peer about the existing peer
+        other_id = room.other_peer_id(peer_id)
+        await ws.send_json({"type": "peer-joined", "peer_id": other_id, "language": other.language})
+
     async def handle_translate(msg: dict) -> None:
+        """Translate text and stream to BOTH peers as subtitles."""
+        if not settings.groq_api_key:
+            await ws.send_json({"type": "error", "message": "API key not configured"})
+            return
         msg_id = str(msg.get("id", ""))
         text = str(msg.get("text", "")).strip()
         if not text:
             return
         source = str(msg.get("source", "auto"))
         target = str(msg.get("target", "en-US"))
-        formal = bool(msg.get("formal", False))
-        system = build_translation_system(source, target, formal=formal)
+        system = build_translation_system(source, target)
         messages = history_to_messages([{"role": "user", "content": text}], system=system)
+
         try:
             async for piece in stream_text(messages=messages, temperature=0.2):
-                await ws.send_json({"type": "delta", "id": msg_id, "content": piece})
-            await ws.send_json({"type": "done", "id": msg_id})
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("ws translate failed")
+                delta_msg = {"type": "delta", "id": msg_id, "content": piece, "from": peer_id}
+                # Send to both peers
+                await ws.send_json(delta_msg)
+                other_now = room.other_peer(peer_id)
+                if other_now:
+                    try:
+                        await other_now.ws.send_json(delta_msg)
+                    except Exception:
+                        pass
+            done_msg = {"type": "done", "id": msg_id, "from": peer_id}
+            await ws.send_json(done_msg)
+            other_now = room.other_peer(peer_id)
+            if other_now:
+                try:
+                    await other_now.ws.send_json(done_msg)
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.exception("room translate failed")
             await ws.send_json({"type": "error", "id": msg_id, "message": str(exc)})
 
     try:
@@ -192,20 +279,62 @@ async def call_socket(ws: WebSocket) -> None:
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await ws.send_json({"type": "error", "id": "", "message": "invalid json"})
+                await ws.send_json({"type": "error", "message": "invalid json"})
                 continue
+
             mtype = msg.get("type")
+
             if mtype == "ping":
                 await ws.send_json({"type": "pong"})
+
+            elif mtype == "set-language":
+                peer.language = str(msg.get("language", "en-US"))
+                # Notify other peer of language change
+                other_now = room.other_peer(peer_id)
+                if other_now:
+                    try:
+                        await other_now.ws.send_json({
+                            "type": "peer-language", "peer_id": peer_id, "language": peer.language
+                        })
+                    except Exception:
+                        pass
+
+            elif mtype in ("offer", "answer", "ice-candidate"):
+                # Relay WebRTC signaling to the other peer
+                other_now = room.other_peer(peer_id)
+                if other_now:
+                    relay = {**msg, "from": peer_id}
+                    try:
+                        await other_now.ws.send_json(relay)
+                    except Exception:
+                        pass
+
             elif mtype == "translate":
-                # Run in background so multiple translations can stream concurrently.
                 asyncio.create_task(handle_translate(msg))
+
+            elif mtype == "subtitle":
+                # Forward subtitle (original text) to the other peer
+                other_now = room.other_peer(peer_id)
+                if other_now:
+                    try:
+                        await other_now.ws.send_json({**msg, "from": peer_id})
+                    except Exception:
+                        pass
+
             else:
-                await ws.send_json(
-                    {"type": "error", "id": str(msg.get("id", "")), "message": f"unknown type {mtype}"}
-                )
+                await ws.send_json({"type": "error", "message": f"unknown type: {mtype}"})
+
     except WebSocketDisconnect:
-        return
+        pass
+    finally:
+        rooms.remove_peer(room_id, peer_id)
+        # Notify remaining peer
+        other_now = room.other_peer(peer_id) if rooms.get_room(room_id) else None
+        if other_now:
+            try:
+                await other_now.ws.send_json({"type": "peer-left", "peer_id": peer_id})
+            except Exception:
+                pass
 
 
 # Quick label helper exposed for tests.
