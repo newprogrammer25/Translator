@@ -46,7 +46,7 @@ export function CallMode() {
   const [prefs, setPrefs] = useState<Prefs>(() => loadJSON(PREFS_KEY, DEFAULT_PREFS));
   const [callState, setCallState] = useState<CallState>("idle");
   const [roomId, setRoomId] = useState<string | null>(null);
-  const [peerId, setPeerId] = useState<string | null>(null);
+  const [, setPeerId] = useState<string | null>(null);
   const [peerLanguage, setPeerLanguage] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [recording, setRecording] = useState(false);
