@@ -9,9 +9,8 @@ interface Props {
 }
 
 /**
- * Premium record FAB. Idle state = brand gradient with halo glow; recording
- * state = warm rose with double soft-pulse halo. Sized for thumb taps on
- * mobile.
+ * Premium recording FAB with animated halos.
+ * Idle = teal gradient with glow; Recording = rose pulse.
  */
 export function RecordButton({
   recording,
@@ -20,8 +19,8 @@ export function RecordButton({
   disabled,
   size = "lg",
 }: Props) {
-  const dim = size === "lg" ? "w-[88px] h-[88px]" : "w-14 h-14";
-  const iconDim = size === "lg" ? "w-7 h-7" : "w-6 h-6";
+  const dim = size === "lg" ? "w-20 h-20" : "w-14 h-14";
+  const iconDim = size === "lg" ? "w-6 h-6" : "w-5 h-5";
 
   return (
     <button
@@ -30,30 +29,28 @@ export function RecordButton({
       disabled={disabled}
       aria-label={recording ? "Stop recording" : "Start recording"}
       aria-pressed={recording}
-      className={`fab ${dim} relative`}
+      className={`fab ${dim} relative group`}
     >
-      {/* Halo rings (recording = animated; idle = subtle teal glow). */}
+      {/* Outer halo */}
       <span
         aria-hidden
-        className={`absolute inset-0 rounded-full transition duration-300 ease-premium ${
+        className={`absolute inset-0 rounded-full transition-all duration-300 ease-premium ${
           recording
-            ? "bg-rose-500/20 ring-2 ring-rose-400/50 animate-ping"
-            : "bg-teal-500/0 ring-1 ring-white/[0.06]"
+            ? "bg-rose-500/15 ring-2 ring-rose-400/40 scale-110 animate-pulse-soft"
+            : "ring-1 ring-white/[0.06] group-hover:ring-teal-400/20 group-hover:scale-105"
         }`}
       />
+      {/* Inner fill */}
       <span
         aria-hidden
-        className={`absolute inset-1.5 rounded-full transition duration-300 ${
+        className={`absolute inset-2 rounded-full transition-all duration-300 ${
           recording
-            ? "bg-rose-500 shadow-[0_22px_60px_-18px_rgba(244,63,94,0.7)]"
-            : "bg-brand-grad shadow-glow-teal"
+            ? "bg-rose-500 shadow-[0_20px_60px_-16px_rgba(244,63,94,0.6)]"
+            : "bg-brand-grad shadow-glow-teal group-hover:shadow-[0_24px_70px_-20px_rgba(20,184,166,0.65)]"
         }`}
       />
-      <span
-        className={`relative inline-flex items-center justify-center text-canvas-950 ${
-          recording ? "text-white" : ""
-        }`}
-      >
+      {/* Icon */}
+      <span className={`relative inline-flex items-center justify-center ${recording ? "text-white" : "text-canvas-950"}`}>
         {recording ? <Square className={iconDim} /> : <Mic className={iconDim} />}
       </span>
     </button>

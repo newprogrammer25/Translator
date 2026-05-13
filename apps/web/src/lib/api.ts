@@ -3,6 +3,11 @@ import type { Language } from "./types";
 const RAW_BASE = import.meta.env.VITE_API_BASE ?? "";
 export const API_BASE = RAW_BASE.replace(/\/$/, "");
 
+/** Returns the base URL for direct fetch calls (used by HealthBadge etc.) */
+export function apiBase(): string {
+  return API_BASE;
+}
+
 export function apiUrl(path: string): string {
   if (path.startsWith("http")) return path;
   return `${API_BASE}${path}`;

@@ -2,22 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — Translator AI Platform
+   Premium dark UI with glass morphism, micro-interactions, and fluid motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 :root {
   color-scheme: dark;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-feature-settings: "ss01", "cv11", "tnum";
-}
-
-* {
-  --tw-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-premium: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 html,
 body,
 #root {
-  /* `dvh` so iOS Safari's collapsing toolbar doesn't snap layout. */
   min-height: 100dvh;
   background-color: #070512;
   color: #e2e8f0;
@@ -28,45 +31,50 @@ body {
   margin: 0;
   overscroll-behavior-y: none;
   background-image:
-    radial-gradient(at 18% 0%, rgba(139, 92, 246, 0.18) 0%, transparent 55%),
-    radial-gradient(at 82% 0%, rgba(20, 184, 166, 0.14) 0%, transparent 55%),
-    radial-gradient(at 50% 110%, rgba(124, 58, 237, 0.10) 0%, transparent 60%);
+    radial-gradient(ellipse at 20% 0%, rgba(139, 92, 246, 0.14) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 0%, rgba(20, 184, 166, 0.11) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 100%, rgba(124, 58, 237, 0.08) 0%, transparent 50%);
   background-attachment: fixed;
 }
 
-button {
-  font-family: inherit;
-}
-textarea,
-input,
-select {
+button, textarea, input, select {
   font-family: inherit;
 }
 
-/* Defeat sticky :hover on touch devices. */
+/* Kill sticky :hover on touch */
 @media (hover: none) {
-  button:hover,
-  a:hover {
-    transition-duration: 0ms !important;
-  }
+  button:hover, a:hover { transition-duration: 0ms !important; }
 }
 
 @layer components {
-  /* Premium glass surface. Hairline border + edge-light + inner glow. */
+  /* ═══════════════════════════════════════════════
+     SURFACES & GLASS
+     ═══════════════════════════════════════════════ */
   .surface {
-    @apply relative rounded-3xl bg-canvas-900/65 backdrop-blur-2xl;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    @apply relative rounded-3xl bg-canvas-900/60 backdrop-blur-2xl;
+    border: 1px solid rgba(255, 255, 255, 0.05);
     box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.02),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05),
-      0 30px 80px -40px rgba(124, 58, 237, 0.22);
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 24px 64px -32px rgba(124, 58, 237, 0.18),
+      0 0 0 1px rgba(255, 255, 255, 0.02);
+  }
+
+  .surface-elevated {
+    @apply relative rounded-3xl bg-canvas-800/70 backdrop-blur-xl;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 32px 80px -32px rgba(124, 58, 237, 0.25);
   }
 
   .pane {
-    @apply rounded-2xl bg-canvas-800/55;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    @apply rounded-2xl bg-canvas-800/50;
+    border: 1px solid rgba(255, 255, 255, 0.04);
   }
 
+  /* ═══════════════════════════════════════════════
+     TYPOGRAPHY
+     ═══════════════════════════════════════════════ */
   .heading-display {
     @apply font-display font-bold tracking-tightest text-white;
   }
@@ -75,97 +83,95 @@ select {
     @apply text-[11px] uppercase tracking-[0.18em] text-ink-400 font-medium;
   }
 
-  .hairline {
-    border-color: rgba(255, 255, 255, 0.06);
-  }
-
-  /* Buttons. */
+  /* ═══════════════════════════════════════════════
+     BUTTONS
+     ═══════════════════════════════════════════════ */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5
-           text-sm font-semibold text-canvas-950 transition-[transform,box-shadow,background]
-           duration-200 ease-premium
+           text-sm font-semibold text-canvas-950
            bg-brand-grad shadow-glow-teal
-           active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-200 ease-premium
+           hover:shadow-[0_20px_70px_-24px_rgba(20,184,166,0.7)]
+           active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed
            disabled:active:scale-100;
   }
 
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2
-           text-sm font-medium text-ink-100 transition-colors duration-150 ease-premium
+           text-sm font-medium text-ink-100
            bg-white/[0.04] hover:bg-white/[0.08]
            border border-white/[0.06]
-           active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed;
+           transition-all duration-150 ease-premium
+           active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed;
   }
 
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5
            text-xs font-medium text-ink-300 hover:text-white hover:bg-white/[0.06]
-           transition-colors duration-150;
+           transition-all duration-150;
   }
 
   .btn-danger {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5
-           text-sm font-semibold text-white transition duration-200 ease-premium
-           bg-rose-500/90 hover:bg-rose-500 shadow-[0_18px_50px_-20px_rgba(244,63,94,0.6)]
-           active:scale-[0.98];
+           text-sm font-semibold text-white
+           bg-rose-500/90 hover:bg-rose-500
+           shadow-[0_18px_50px_-20px_rgba(244,63,94,0.6)]
+           transition-all duration-200 ease-premium
+           active:scale-[0.97];
   }
 
   .icon-btn {
     @apply inline-flex items-center justify-center rounded-full
            w-9 h-9 text-ink-300 hover:text-white hover:bg-white/[0.07]
-           transition-colors duration-150 ease-premium
+           transition-all duration-150 ease-premium
+           active:scale-90
            disabled:opacity-30 disabled:cursor-not-allowed;
   }
 
-  /* Pill — replaces old `.chip`, no rectangular dashboard look. */
   .pill {
     @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1
            text-[11px] font-medium text-ink-200 bg-white/[0.05] ring-1 ring-white/[0.06];
   }
 
-  /* Premium custom select (native <select> retained for a11y + iOS sheet). */
+  /* ═══════════════════════════════════════════════
+     FORM CONTROLS
+     ═══════════════════════════════════════════════ */
   .select-pill {
     @apply appearance-none rounded-full pl-4 pr-9 py-2.5 text-sm font-medium text-white
-           bg-white/[0.04] border border-white/[0.07]
-           hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-teal-400/40
-           focus:border-teal-400/40 transition-colors duration-150;
+           bg-white/[0.04] border border-white/[0.06]
+           hover:bg-white/[0.07] hover:border-white/[0.10]
+           focus:outline-none focus:ring-2 focus:ring-teal-400/30
+           focus:border-teal-400/30 transition-all duration-150;
     background-image:
       linear-gradient(45deg, transparent 50%, currentColor 50%),
       linear-gradient(135deg, currentColor 50%, transparent 50%);
-    background-position:
-      calc(100% - 18px) 55%,
-      calc(100% - 12px) 55%;
-    background-size:
-      6px 6px,
-      6px 6px;
+    background-position: calc(100% - 18px) 55%, calc(100% - 12px) 55%;
+    background-size: 6px 6px, 6px 6px;
     background-repeat: no-repeat;
     color: rgba(226, 232, 240, 0.92);
   }
-  .select-pill::-ms-expand {
-    display: none;
-  }
-  .select-pill option {
-    background-color: #0c0a1c;
-    color: #e2e8f0;
-  }
+  .select-pill::-ms-expand { display: none; }
+  .select-pill option { background-color: #0c0a1c; color: #e2e8f0; }
 
-  /* Flat textarea / input. */
   .field {
     @apply w-full bg-transparent text-white placeholder-ink-500
            focus:outline-none border-0 resize-none
            text-base md:text-lg leading-relaxed;
   }
 
-  /* Floating action button. */
+  /* ═══════════════════════════════════════════════
+     FAB
+     ═══════════════════════════════════════════════ */
   .fab {
     @apply inline-flex items-center justify-center rounded-full
-           transition-[transform,box-shadow] duration-200 ease-premium
+           transition-all duration-200 ease-premium
            active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed
            disabled:active:scale-100;
   }
 
-  /* Streaming containers — keep layout/paint contained so token updates don't
-     repaint the whole document. */
+  /* ═══════════════════════════════════════════════
+     STREAMING & PERFORMANCE
+     ═══════════════════════════════════════════════ */
   .stream-pane {
     contain: content;
     content-visibility: auto;
@@ -177,22 +183,21 @@ select {
   .smooth-scroll {
     scroll-behavior: smooth;
     overscroll-behavior: contain;
-    will-change: scroll-position;
   }
 
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
+  .scrollbar-thin::-webkit-scrollbar { width: 5px; height: 5px; }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.08);
     border-radius: 9999px;
   }
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.15);
   }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 
-  /* Shimmer used for the "translating" idle state. */
+  /* ═══════════════════════════════════════════════
+     SHIMMER & SKELETON
+     ═══════════════════════════════════════════════ */
   .shimmer {
     position: relative;
     overflow: hidden;
@@ -205,51 +210,130 @@ select {
     background: linear-gradient(
       90deg,
       rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, 0.08) 40%,
-      rgba(94, 234, 212, 0.18) 50%,
-      rgba(255, 255, 255, 0.08) 60%,
+      rgba(255, 255, 255, 0.06) 35%,
+      rgba(94, 234, 212, 0.14) 50%,
+      rgba(255, 255, 255, 0.06) 65%,
       rgba(255, 255, 255, 0) 100%
     );
     background-size: 200% 100%;
     animation: shine 2.4s linear infinite;
   }
 
-  /* Streaming caret blink. */
-  .typing-caret::after {
-    content: "▍";
-    color: rgba(94, 234, 212, 0.85);
-    margin-left: 2px;
-    animation: caret 0.9s steps(2) infinite;
-  }
-  @keyframes caret {
-    0%,
-    50% {
-      opacity: 1;
-    }
-    51%,
-    100% {
-      opacity: 0;
-    }
+  .skeleton {
+    @apply rounded-lg;
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.03) 0%,
+      rgba(255, 255, 255, 0.07) 50%,
+      rgba(255, 255, 255, 0.03) 100%
+    );
+    background-size: 200% 100%;
+    animation: shine 2s ease-in-out infinite;
   }
 
-  /* Safe-area helpers (iOS / Android). */
-  .pb-safe {
-    padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+  .skeleton-surface {
+    @apply bg-canvas-900/30 border border-white/[0.03] rounded-3xl;
   }
-  .pt-safe {
-    padding-top: max(env(safe-area-inset-top), 0.5rem);
+
+  /* ═══════════════════════════════════════════════
+     TYPING CARET
+     ═══════════════════════════════════════════════ */
+  .typing-caret::after {
+    content: "\2588";
+    color: rgba(94, 234, 212, 0.8);
+    margin-left: 1px;
+    font-weight: 300;
+    animation: blink 1s steps(2) infinite;
   }
+  @keyframes blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  /* ═══════════════════════════════════════════════
+     PAGE TRANSITIONS
+     ═══════════════════════════════════════════════ */
+  .page-transition {
+    transition: opacity 180ms var(--ease-premium), transform 180ms var(--ease-premium);
+  }
+  .page-enter {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .page-exit {
+    opacity: 0;
+    transform: translateY(8px) scale(0.995);
+    pointer-events: none;
+  }
+
+  /* ═══════════════════════════════════════════════
+     SWAP BUTTON ANIMATION
+     ═══════════════════════════════════════════════ */
+  .swap-animate {
+    animation: swapSpin 450ms var(--ease-bounce);
+  }
+  @keyframes swapSpin {
+    0% { transform: rotate(0deg) scale(1); }
+    40% { transform: rotate(200deg) scale(1.15); }
+    100% { transform: rotate(360deg) scale(1); }
+  }
+
+  /* ═══════════════════════════════════════════════
+     CHARACTER COUNTER
+     ═══════════════════════════════════════════════ */
+  .char-safe { @apply text-ink-500 transition-colors duration-200; }
+  .char-warn { @apply text-amber-400 transition-colors duration-200; }
+  .char-danger { @apply text-rose-400 font-semibold transition-colors duration-200; }
+
+  /* ═══════════════════════════════════════════════
+     TOAST
+     ═══════════════════════════════════════════════ */
+  .toast-container {
+    @apply fixed z-50 pointer-events-none;
+    bottom: max(5rem, calc(5rem + env(safe-area-inset-bottom)));
+    right: 1rem;
+    left: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+  }
+  @media (min-width: 1024px) {
+    .toast-container { left: auto; right: 1.5rem; bottom: 1.5rem; }
+  }
+
+  /* ═══════════════════════════════════════════════
+     KEYBOARD SHORTCUT HINT
+     ═══════════════════════════════════════════════ */
+  .kbd {
+    @apply inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded
+           text-[10px] font-medium text-ink-500
+           bg-white/[0.03] border border-white/[0.06];
+  }
+
+  /* ═══════════════════════════════════════════════
+     SAFE AREA
+     ═══════════════════════════════════════════════ */
+  .pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 0.75rem); }
+  .pt-safe { padding-top: max(env(safe-area-inset-top), 0.5rem); }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   KEYFRAMES
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes shine {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .smooth-scroll {
-    scroll-behavior: auto;
-  }
+  .smooth-scroll { scroll-behavior: auto; }
 }
