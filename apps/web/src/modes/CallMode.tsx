@@ -1,307 +1,753 @@
-import { ArrowDownUp, Mic, MicOff, Phone, PhoneOff, Volume2 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Copy, Link2, Mic, MicOff, Phone, PhoneOff, Volume2 } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { useToast } from "../components/Toast";
 import { useLanguages } from "../hooks/useLanguages";
 import { useTTS } from "../hooks/useTTS";
-import { wsUrl } from "../lib/api";
+import { apiUrl, wsUrl } from "../lib/api";
 import {
   isSpeechRecognitionSupported,
   startRecognition,
   type RecognitionController,
 } from "../lib/speech";
 import { loadJSON, saveJSON } from "../lib/storage";
-import type { CallUtterance } from "../lib/types";
 
-type SpeakerId = "A" | "B";
+/* ═══════════════════════════════════════════════════════════════════
+   TYPES
+   ═══════════════════════════════════════════════════════════════════ */
 
 interface Prefs {
-  langA: string;
-  langB: string;
+  myLanguage: string;
   autoSpeak: boolean;
 }
 
-const PREFS_KEY = "translator:call";
-const DEFAULT_PREFS: Prefs = { langA: "en-US", langB: "ru-RU", autoSpeak: true };
+const PREFS_KEY = "translator:call-v2";
+const DEFAULT_PREFS: Prefs = { myLanguage: "en-US", autoSpeak: true };
 
-interface SpeakerState {
-  recording: boolean;
-  partial: string;
+type CallState = "idle" | "creating" | "joining" | "waiting" | "connected";
+
+interface Subtitle {
+  id: string;
+  from: "me" | "peer";
+  original: string;
+  translation: string;
+  done: boolean;
+  timestamp: number;
 }
 
-const initialSpeakerState: SpeakerState = { recording: false, partial: "" };
+/* ═══════════════════════════════════════════════════════════════════
+   COMPONENT
+   ═══════════════════════════════════════════════════════════════════ */
 
 export function CallMode() {
   const languages = useLanguages();
   const { toast } = useToast();
+  const { speak } = useTTS();
   const [prefs, setPrefs] = useState<Prefs>(() => loadJSON(PREFS_KEY, DEFAULT_PREFS));
-  const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [utterances, setUtterances] = useState<CallUtterance[]>([]);
+  const [callState, setCallState] = useState<CallState>("idle");
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [peerId, setPeerId] = useState<string | null>(null);
+  const [peerLanguage, setPeerLanguage] = useState<string | null>(null);
+  const [muted, setMuted] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [partial, setPartial] = useState("");
+  const [subtitles, setSubtitles] = useState<Subtitle[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [swapAnimating, setSwapAnimating] = useState(false);
-  const [speakers, setSpeakers] = useState<Record<SpeakerId, SpeakerState>>({
-    A: { ...initialSpeakerState },
-    B: { ...initialSpeakerState },
-  });
+  const [joinInput, setJoinInput] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
-  const recognizersRef = useRef<Record<SpeakerId, RecognitionController | null>>({ A: null, B: null });
-  const utteranceMap = useRef<Map<string, CallUtterance>>(new Map());
-  const flushFrameRef = useRef<number | null>(null);
-  const { speak, cancel } = useTTS();
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const recognizerRef = useRef<RecognitionController | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const subtitleMapRef = useRef<Map<string, Subtitle>>(new Map());
+
   const supportsSpeech = isSpeechRecognitionSupported();
 
   useEffect(() => saveJSON(PREFS_KEY, prefs), [prefs]);
 
-  const flushUtterances = useCallback(() => {
-    flushFrameRef.current = null;
-    setUtterances(Array.from(utteranceMap.current.values()).sort((a, b) => a.createdAt - b.createdAt));
+  // Auto-scroll subtitles
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  }, [subtitles, partial]);
+
+  /* ─── WebRTC Setup ─── */
+
+  const createPeerConnection = useCallback(() => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "ice-candidate",
+          candidate: e.candidate.toJSON(),
+        }));
+      }
+    };
+
+    pc.ontrack = (e) => {
+      if (remoteAudioRef.current && e.streams[0]) {
+        remoteAudioRef.current.srcObject = e.streams[0];
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") {
+        setCallState("connected");
+      } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+        setError("Connection lost");
+      }
+    };
+
+    pcRef.current = pc;
+    return pc;
   }, []);
 
-  const upsertUtterance = useCallback((u: CallUtterance) => {
-    utteranceMap.current.set(u.id, u);
-    if (flushFrameRef.current === null) {
-      flushFrameRef.current = requestAnimationFrame(flushUtterances);
+  const startLocalAudio = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      return stream;
+    } catch {
+      setError("Microphone access denied");
+      return null;
     }
-  }, [flushUtterances]);
+  }, []);
 
-  useEffect(() => () => { if (flushFrameRef.current !== null) cancelAnimationFrame(flushFrameRef.current); }, []);
+  /* ─── WebSocket Message Handler ─── */
 
-  const handleSocketMessage = useCallback(
-    (data: { type: string; id?: string; content?: string; message?: string }) => {
-      if (data.type === "delta" && data.id && data.content) {
-        const existing = utteranceMap.current.get(data.id);
-        if (!existing) return;
-        upsertUtterance({ ...existing, translation: existing.translation + data.content });
-      } else if (data.type === "done" && data.id) {
-        const existing = utteranceMap.current.get(data.id);
-        if (!existing) return;
-        const finalUtterance = { ...existing, done: true };
-        upsertUtterance(finalUtterance);
-        if (prefs.autoSpeak && finalUtterance.translation.trim()) {
-          void speak(finalUtterance.translation, { lang: finalUtterance.target });
-        }
-      } else if (data.type === "error" && data.message) {
-        setError(data.message);
+  const handleWsMessage = useCallback(async (data: Record<string, unknown>) => {
+    const type = data.type as string;
+
+    switch (type) {
+      case "joined": {
+        setPeerId(data.peer_id as string);
+        const count = data.peer_count as number;
+        if (count === 1) setCallState("waiting");
+        break;
       }
-    },
-    [upsertUtterance, prefs.autoSpeak, speak],
-  );
 
-  const connect = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
-    setConnecting(true);
+      case "peer-joined": {
+        setPeerLanguage(data.language as string);
+        setCallState("connected");
+        toast("Partner joined the call", "success");
+
+        // Initiator creates offer
+        const pc = pcRef.current ?? createPeerConnection();
+        const stream = localStreamRef.current ?? await startLocalAudio();
+        if (stream) {
+          stream.getTracks().forEach((t) => {
+            if (!pc.getSenders().find((s) => s.track === t)) {
+              pc.addTrack(t, stream);
+            }
+          });
+        }
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        wsRef.current?.send(JSON.stringify({ type: "offer", sdp: offer.sdp }));
+        break;
+      }
+
+      case "peer-left": {
+        setPeerLanguage(null);
+        setCallState("waiting");
+        toast("Partner left the call", "info");
+        pcRef.current?.close();
+        pcRef.current = null;
+        break;
+      }
+
+      case "peer-language": {
+        setPeerLanguage(data.language as string);
+        break;
+      }
+
+      case "offer": {
+        const pc = pcRef.current ?? createPeerConnection();
+        const stream = localStreamRef.current ?? await startLocalAudio();
+        if (stream) {
+          stream.getTracks().forEach((t) => {
+            if (!pc.getSenders().find((s) => s.track === t)) {
+              pc.addTrack(t, stream);
+            }
+          });
+        }
+        await pc.setRemoteDescription({ type: "offer", sdp: data.sdp as string });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        wsRef.current?.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+        break;
+      }
+
+      case "answer": {
+        await pcRef.current?.setRemoteDescription({ type: "answer", sdp: data.sdp as string });
+        break;
+      }
+
+      case "ice-candidate": {
+        if (data.candidate) {
+          await pcRef.current?.addIceCandidate(data.candidate as RTCIceCandidateInit);
+        }
+        break;
+      }
+
+      case "subtitle": {
+        // Peer's original speech (no translation yet)
+        const id = data.id as string;
+        const sub: Subtitle = {
+          id, from: "peer", original: data.text as string,
+          translation: "", done: false, timestamp: Date.now(),
+        };
+        subtitleMapRef.current.set(id, sub);
+        flushSubtitles();
+        break;
+      }
+
+      case "delta": {
+        const id = data.id as string;
+        const existing = subtitleMapRef.current.get(id);
+        if (existing) {
+          subtitleMapRef.current.set(id, {
+            ...existing,
+            translation: existing.translation + (data.content as string),
+          });
+          flushSubtitles();
+        }
+        break;
+      }
+
+      case "done": {
+        const id = data.id as string;
+        const existing = subtitleMapRef.current.get(id);
+        if (existing) {
+          const final = { ...existing, done: true };
+          subtitleMapRef.current.set(id, final);
+          flushSubtitles();
+          // Auto-speak peer's translation
+          if (prefs.autoSpeak && final.from === "peer" && final.translation.trim()) {
+            speak(final.translation, { lang: prefs.myLanguage });
+          }
+        }
+        break;
+      }
+
+      case "error": {
+        setError(data.message as string);
+        break;
+      }
+
+      case "pong":
+        break;
+    }
+  }, [createPeerConnection, startLocalAudio, toast, prefs.autoSpeak, prefs.myLanguage, speak]);
+
+  const flushSubtitles = useCallback(() => {
+    setSubtitles(
+      Array.from(subtitleMapRef.current.values()).sort((a, b) => a.timestamp - b.timestamp)
+    );
+  }, []);
+
+  /* ─── Connect to Room ─── */
+
+  const connectToRoom = useCallback(async (rid: string) => {
     setError(null);
-    let url: string;
-    try { url = wsUrl("/api/ws/call"); } catch (err) { setError((err as Error).message); setConnecting(false); return; }
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(wsUrl(`/api/ws/room/${rid}`));
     wsRef.current = ws;
-    ws.onopen = () => { setConnected(true); setConnecting(false); toast("Call connected", "success"); };
-    ws.onclose = () => { setConnected(false); setConnecting(false); };
-    ws.onerror = () => { setError("WebSocket connection failed"); setConnecting(false); };
-    ws.onmessage = (event) => { try { handleSocketMessage(JSON.parse(event.data)); } catch { /* skip */ } };
-  }, [handleSocketMessage, toast]);
 
-  const disconnect = useCallback(() => {
-    cancel();
-    Object.values(recognizersRef.current).forEach((r) => r?.abort());
-    recognizersRef.current = { A: null, B: null };
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "set-language", language: prefs.myLanguage }));
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        void handleWsMessage(data);
+      } catch {}
+    };
+
+    ws.onerror = () => setError("Connection failed");
+    ws.onclose = () => {
+      if (callState !== "idle") {
+        setCallState("idle");
+        toast("Disconnected", "info");
+      }
+    };
+
+    // Setup WebRTC
+    createPeerConnection();
+    await startLocalAudio();
+  }, [prefs.myLanguage, handleWsMessage, createPeerConnection, startLocalAudio, callState, toast]);
+
+  /* ─── Create Room ─── */
+
+  const createRoom = useCallback(async () => {
+    setCallState("creating");
+    setError(null);
+    try {
+      const res = await fetch(apiUrl("/api/rooms/create"), { method: "POST" });
+      if (!res.ok) throw new Error("Failed to create room");
+      const { room_id } = await res.json();
+      setRoomId(room_id);
+      await connectToRoom(room_id);
+    } catch (err) {
+      setError((err as Error).message);
+      setCallState("idle");
+    }
+  }, [connectToRoom]);
+
+  /* ─── Join Room ─── */
+
+  const joinRoom = useCallback(async (rid?: string) => {
+    const id = rid || joinInput.trim();
+    if (!id) return;
+    setCallState("joining");
+    setError(null);
+
+    try {
+      // Verify room exists
+      const res = await fetch(apiUrl(`/api/rooms/${id}`));
+      if (!res.ok) throw new Error("Room not found");
+      const info = await res.json();
+      if (info.is_full) throw new Error("Room is full");
+
+      setRoomId(id);
+      await connectToRoom(id);
+    } catch (err) {
+      setError((err as Error).message);
+      setCallState("idle");
+    }
+  }, [joinInput, connectToRoom]);
+
+  /* ─── Hangup ─── */
+
+  const hangup = useCallback(() => {
+    recognizerRef.current?.abort();
+    recognizerRef.current = null;
+    setRecording(false);
+    setPartial("");
+
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+
+    pcRef.current?.close();
+    pcRef.current = null;
+
     wsRef.current?.close();
     wsRef.current = null;
-    setConnected(false);
-    setSpeakers({ A: { ...initialSpeakerState }, B: { ...initialSpeakerState } });
-    toast("Call ended", "info");
-  }, [cancel, toast]);
 
-  useEffect(() => () => disconnect(), [disconnect]);
+    setCallState("idle");
+    setRoomId(null);
+    setPeerId(null);
+    setPeerLanguage(null);
+    setSubtitles([]);
+    subtitleMapRef.current.clear();
+  }, []);
 
-  const finalizeUtterance = useCallback(
-    (speaker: SpeakerId, text: string) => {
-      if (!text.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-      const id = `${speaker}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-      const source = speaker === "A" ? prefs.langA : prefs.langB;
-      const target = speaker === "A" ? prefs.langB : prefs.langA;
-      const utterance: CallUtterance = { id, speaker, source, target, original: text.trim(), translation: "", done: false, createdAt: Date.now() };
-      upsertUtterance(utterance);
-      wsRef.current.send(JSON.stringify({ type: "translate", id, text: text.trim(), source, target }));
-    },
-    [prefs.langA, prefs.langB, upsertUtterance],
-  );
+  // Cleanup on unmount
+  useEffect(() => () => { hangup(); }, [hangup]);
 
-  const startSpeaker = useCallback((speaker: SpeakerId) => {
-    if (!connected) connect();
-    const lang = speaker === "A" ? prefs.langA : prefs.langB;
-    const controller = startRecognition(lang === "auto" ? "en-US" : lang, {
-      onPartial: (text) => setSpeakers((prev) => ({ ...prev, [speaker]: { ...prev[speaker], partial: text } })),
+  /* ─── Speech Recognition ─── */
+
+  const startListening = useCallback(() => {
+    if (!supportsSpeech || callState !== "connected") return;
+    setPartial("");
+
+    const controller = startRecognition(prefs.myLanguage, {
+      onPartial: (text) => setPartial(text),
       onFinal: (text) => {
-        setSpeakers((prev) => ({ ...prev, [speaker]: { ...prev[speaker], partial: "" } }));
-        finalizeUtterance(speaker, text);
+        setPartial("");
+        if (!text.trim()) return;
+
+        // Create subtitle locally
+        const id = `me-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+        const sub: Subtitle = {
+          id, from: "me", original: text.trim(),
+          translation: "", done: false, timestamp: Date.now(),
+        };
+        subtitleMapRef.current.set(id, sub);
+        flushSubtitles();
+
+        // Send original text to peer as subtitle
+        wsRef.current?.send(JSON.stringify({ type: "subtitle", id, text: text.trim() }));
+
+        // Request translation (my language -> peer's language)
+        if (peerLanguage && peerLanguage !== prefs.myLanguage) {
+          wsRef.current?.send(JSON.stringify({
+            type: "translate", id, text: text.trim(),
+            source: prefs.myLanguage, target: peerLanguage,
+          }));
+        }
       },
-      onError: (msg) => { setError(msg); setSpeakers((prev) => ({ ...prev, [speaker]: { ...initialSpeakerState } })); },
-      onEnd: () => setSpeakers((prev) => ({ ...prev, [speaker]: { ...prev[speaker], recording: false } })),
+      onError: (msg) => { setError(msg); setRecording(false); },
+      onEnd: () => {
+        setRecording(false);
+        // Auto-restart if not muted
+        if (!muted && callState === "connected") {
+          setTimeout(() => startListening(), 200);
+        }
+      },
     });
-    if (!controller) return;
-    recognizersRef.current[speaker] = controller;
-    setSpeakers((prev) => ({ ...prev, [speaker]: { ...prev[speaker], recording: true } }));
-  }, [connect, connected, prefs.langA, prefs.langB, finalizeUtterance]);
+    if (controller) {
+      recognizerRef.current = controller;
+      setRecording(true);
+    }
+  }, [supportsSpeech, callState, prefs.myLanguage, peerLanguage, muted, flushSubtitles]);
 
-  const stopSpeaker = useCallback((speaker: SpeakerId) => {
-    recognizersRef.current[speaker]?.stop();
-    recognizersRef.current[speaker] = null;
-    setSpeakers((prev) => ({ ...prev, [speaker]: { ...prev[speaker], recording: false } }));
+  const stopListening = useCallback(() => {
+    recognizerRef.current?.stop();
+    recognizerRef.current = null;
+    setRecording(false);
+    setPartial("");
   }, []);
 
-  const swapLanguages = useCallback(() => {
-    setSwapAnimating(true);
-    setTimeout(() => setSwapAnimating(false), 450);
-    setPrefs((p) => ({ ...p, langA: p.langB, langB: p.langA }));
-  }, []);
+  // Auto-start listening when connected
+  useEffect(() => {
+    if (callState === "connected" && !muted && !recording && supportsSpeech) {
+      const t = setTimeout(startListening, 500);
+      return () => clearTimeout(t);
+    }
+  }, [callState, muted, recording, supportsSpeech, startListening]);
 
-  const speakerASide = useMemo(() => utterances.filter((u) => u.speaker === "A"), [utterances]);
-  const speakerBSide = useMemo(() => utterances.filter((u) => u.speaker === "B"), [utterances]);
+  // Toggle mute
+  const toggleMute = useCallback(() => {
+    if (muted) {
+      setMuted(false);
+      // Will auto-start via effect
+    } else {
+      setMuted(true);
+      stopListening();
+      // Also mute WebRTC audio track
+      localStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
+    }
+  }, [muted, stopListening]);
 
-  return (
-    <div className="flex flex-col gap-8 animate-fade-up">
-      <header className="flex flex-col gap-2">
-        <span className="label-eyebrow">Call Translation</span>
-        <h1 className="heading-display text-[32px] sm:text-[38px] lg:text-[48px] leading-[1.08]">
-          Two voices.{" "}
-          <span className="bg-clip-text text-transparent bg-brand-grad">One interpreter.</span>
-        </h1>
-        <p className="text-ink-400 max-w-xl text-[15px] leading-relaxed">
-          Each side gets an independent mic, language, and streamed translation.
-        </p>
-      </header>
+  // Unmute restores audio track
+  useEffect(() => {
+    if (!muted) {
+      localStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = true; });
+    }
+  }, [muted]);
 
-      {/* Language bar */}
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
-        <LanguageSelect value={prefs.langA} onChange={(code) => setPrefs((p) => ({ ...p, langA: code }))} languages={languages} excludeAuto ariaLabel="Person A language" className="min-w-0" />
-        <button type="button" onClick={swapLanguages} className={`icon-btn ${swapAnimating ? "swap-animate" : ""}`} aria-label="Swap languages">
-          <ArrowDownUp className="w-4 h-4" />
-        </button>
-        <LanguageSelect value={prefs.langB} onChange={(code) => setPrefs((p) => ({ ...p, langB: code }))} languages={languages} excludeAuto ariaLabel="Person B language" className="min-w-0" />
-      </div>
+  /* ─── Copy invite link ─── */
 
-      {/* Speaker columns */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
-        <SpeakerColumn speaker="A" lang={prefs.langA} targetLang={prefs.langB} state={speakers.A} utterances={speakerASide}
-          onStart={() => startSpeaker("A")} onStop={() => stopSpeaker("A")} disabled={!supportsSpeech}
-          onPlay={(t) => void speak(t, { lang: prefs.langB })} />
-        <SpeakerColumn speaker="B" lang={prefs.langB} targetLang={prefs.langA} state={speakers.B} utterances={speakerBSide}
-          onStart={() => startSpeaker("B")} onStop={() => stopSpeaker("B")} disabled={!supportsSpeech}
-          onPlay={(t) => void speak(t, { lang: prefs.langA })} />
-      </div>
+  const copyInviteLink = useCallback(async () => {
+    if (!roomId) return;
+    const link = `${window.location.origin}/call?room=${roomId}`;
+    await navigator.clipboard.writeText(link);
+    toast("Invite link copied!");
+  }, [roomId, toast]);
 
-      {/* Call controls */}
-      <div className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:static z-20 rounded-[24px] border border-white/[0.05] bg-canvas-950/85 backdrop-blur-2xl px-4 py-3 shadow-glow lg:bg-transparent lg:border-0 lg:shadow-none lg:backdrop-blur-none lg:p-0">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            {connected ? (
-              <button type="button" onClick={disconnect} className="btn-danger"><PhoneOff className="w-4 h-4" /> End call</button>
-            ) : (
-              <button type="button" onClick={connect} disabled={connecting} className="btn-primary">
-                <Phone className="w-4 h-4" /> {connecting ? "Connecting..." : "Start call"}
-              </button>
-            )}
-            <span className={`pill ${connected ? "text-teal-200" : "text-ink-400"}`}>
-              <span className={`h-2 w-2 rounded-full ${connected ? "bg-teal-300" : "bg-ink-500"}`} />
-              {connected ? "Live" : "Idle"}
-            </span>
+  /* ─── Check URL for room param on mount ─── */
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const rid = params.get("room");
+    if (rid && callState === "idle") {
+      setJoinInput(rid);
+      void joinRoom(rid);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ─── Notify language change ─── */
+
+  useEffect(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "set-language", language: prefs.myLanguage }));
+    }
+  }, [prefs.myLanguage]);
+
+  /* ═══════════════════════════════════════════════════════════════════
+     RENDER
+     ═══════════════════════════════════════════════════════════════════ */
+
+  // IDLE STATE — create or join
+  if (callState === "idle") {
+    return (
+      <div className="flex flex-col gap-8 animate-fade-up">
+        <header className="flex flex-col gap-2">
+          <span className="label-eyebrow">Audio Call</span>
+          <h1 className="heading-display text-[32px] sm:text-[38px] lg:text-[44px] leading-[1.08]">
+            Call anyone.{" "}
+            <span className="bg-clip-text text-transparent bg-brand-grad">Speak freely.</span>
+          </h1>
+          <p className="text-ink-400 max-w-md text-[15px] leading-relaxed">
+            Real-time audio call with live translation subtitles.
+            Create a room and share the link — no sign-up needed.
+          </p>
+        </header>
+
+        {/* My language */}
+        <div>
+          <span className="label-eyebrow mb-2 block">I speak</span>
+          <LanguageSelect
+            value={prefs.myLanguage}
+            onChange={(code) => setPrefs((p) => ({ ...p, myLanguage: code }))}
+            languages={languages}
+            excludeAuto
+            ariaLabel="My language"
+          />
+        </div>
+
+        {/* Create / Join */}
+        <div className="flex flex-col gap-4">
+          <button type="button" onClick={createRoom} className="btn-primary w-full py-4 text-base">
+            <Phone className="w-5 h-5" />
+            Create Call Room
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-white/[0.06]" />
+            <span className="text-xs text-ink-500 uppercase tracking-widest">or join</span>
+            <div className="flex-1 h-px bg-white/[0.06]" />
           </div>
-          <label className="flex items-center gap-2.5 select-none cursor-pointer text-sm text-ink-300">
-            <span className="relative inline-flex">
-              <input type="checkbox" checked={prefs.autoSpeak} onChange={(e) => setPrefs((p) => ({ ...p, autoSpeak: e.target.checked }))} className="peer sr-only" />
-              <span aria-hidden className="w-9 h-5 rounded-full bg-white/[0.08] ring-1 ring-white/[0.06] peer-checked:bg-brand-grad transition-all duration-200" />
-              <span aria-hidden className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-4" />
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={joinInput}
+              onChange={(e) => setJoinInput(e.target.value)}
+              placeholder="Enter room ID..."
+              className="flex-1 rounded-full px-5 py-3 text-sm bg-white/[0.04] border border-white/[0.06] text-white placeholder-ink-500 focus:outline-none focus:ring-2 focus:ring-teal-400/30"
+              onKeyDown={(e) => { if (e.key === "Enter") void joinRoom(); }}
+            />
+            <button
+              type="button"
+              onClick={() => void joinRoom()}
+              disabled={!joinInput.trim()}
+              className="btn-secondary px-5"
+            >
+              Join
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/20 rounded-2xl px-4 py-2.5">
+            {error}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // WAITING / CREATING / JOINING STATE
+  if (callState === "waiting" || callState === "creating" || callState === "joining") {
+    return (
+      <div className="flex flex-col items-center justify-center gap-6 min-h-[60vh] animate-fade-up">
+        {/* Pulsing icon */}
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-teal-400/20 animate-ping" />
+          <div className="relative w-20 h-20 rounded-full bg-brand-grad flex items-center justify-center shadow-glow-teal">
+            <Phone className="w-8 h-8 text-canvas-950" />
+          </div>
+        </div>
+
+        <div className="text-center">
+          <h2 className="font-display text-xl font-semibold text-white tracking-tight">
+            {callState === "waiting" ? "Waiting for partner..." : "Connecting..."}
+          </h2>
+          {roomId && (
+            <p className="text-ink-400 text-sm mt-2">
+              Room: <span className="text-white font-mono font-semibold">{roomId}</span>
+            </p>
+          )}
+        </div>
+
+        {/* Invite link */}
+        {roomId && (
+          <button type="button" onClick={copyInviteLink} className="btn-secondary gap-2">
+            <Link2 className="w-4 h-4" />
+            Copy Invite Link
+          </button>
+        )}
+
+        {/* Room ID display */}
+        {roomId && (
+          <div className="surface px-6 py-4 text-center">
+            <p className="text-[10px] uppercase tracking-widest text-ink-500 mb-1">Share this ID</p>
+            <p className="font-mono text-2xl font-bold text-white tracking-wider">{roomId}</p>
+          </div>
+        )}
+
+        <button type="button" onClick={hangup} className="btn-ghost text-rose-300 hover:text-rose-200">
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  // CONNECTED STATE — active call with subtitles
+  return (
+    <div className="flex flex-col h-[calc(100dvh-8rem)] lg:h-[calc(100dvh-6rem)] animate-fade-up">
+      {/* Hidden audio element for remote stream */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
+      {/* Top bar — minimal */}
+      <div className="flex items-center justify-between gap-3 pb-4">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 text-xs text-teal-300 font-medium">
+            <span className="h-2 w-2 rounded-full bg-teal-300 animate-pulse-soft" />
+            Live
+          </span>
+          {peerLanguage && (
+            <span className="text-xs text-ink-400">
+              Partner: <span className="text-ink-200">{peerLanguage}</span>
             </span>
-            Speak translations
-          </label>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={copyInviteLink} className="icon-btn w-8 h-8" aria-label="Copy invite link">
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-[10px] text-ink-500 font-mono">{roomId}</span>
         </div>
       </div>
 
+      {/* Subtitle chat area */}
+      <div className="flex-1 overflow-hidden rounded-3xl bg-canvas-900/40 border border-white/[0.04]">
+        <div ref={scrollRef} className="h-full overflow-y-auto px-4 sm:px-6 py-5 space-y-3 smooth-scroll scrollbar-thin">
+          {subtitles.length === 0 && !partial ? (
+            <div className="flex items-center justify-center h-full text-center">
+              <p className="text-sm text-ink-500 max-w-xs">
+                Start speaking — your words and translations will appear here as live subtitles.
+              </p>
+            </div>
+          ) : (
+            <>
+              {subtitles.map((s) => (
+                <SubtitleRow key={s.id} subtitle={s} onSpeak={(text, lang) => speak(text, { lang })} myLang={prefs.myLanguage} peerLang={peerLanguage ?? "en-US"} />
+              ))}
+              {partial && (
+                <div className="flex justify-end">
+                  <div className="max-w-[85%] rounded-2xl rounded-br-md bg-teal-500/10 ring-1 ring-teal-400/15 px-4 py-2 text-sm text-teal-200/80 italic">
+                    {partial}...
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom controls */}
+      <div className="flex items-center justify-center gap-4 pt-5 pb-2">
+        {/* Mute button */}
+        <button
+          type="button"
+          onClick={toggleMute}
+          className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 ${
+            muted
+              ? "bg-white/[0.08] text-ink-300 ring-1 ring-white/[0.08]"
+              : "bg-white/[0.04] text-white ring-1 ring-teal-400/20"
+          }`}
+          aria-label={muted ? "Unmute" : "Mute"}
+        >
+          {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+        </button>
+
+        {/* Hangup */}
+        <button
+          type="button"
+          onClick={hangup}
+          className="w-16 h-16 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-[0_16px_40px_-12px_rgba(244,63,94,0.5)] hover:bg-rose-400 active:scale-95 transition-all duration-200"
+          aria-label="End call"
+        >
+          <PhoneOff className="w-6 h-6" />
+        </button>
+
+        {/* Auto-speak toggle */}
+        <button
+          type="button"
+          onClick={() => setPrefs((p) => ({ ...p, autoSpeak: !p.autoSpeak }))}
+          className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-200 ${
+            prefs.autoSpeak
+              ? "bg-white/[0.04] text-teal-300 ring-1 ring-teal-400/20"
+              : "bg-white/[0.08] text-ink-400 ring-1 ring-white/[0.08]"
+          }`}
+          aria-label={prefs.autoSpeak ? "Disable auto-speak" : "Enable auto-speak"}
+        >
+          <Volume2 className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Status */}
+      <p className="text-center text-[11px] text-ink-500 pb-1">
+        {recording ? (
+          <span className="text-teal-300">Listening...</span>
+        ) : muted ? (
+          "Muted"
+        ) : (
+          "Speak naturally"
+        )}
+      </p>
+
       {error && (
-        <div className="animate-fade-up text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/20 rounded-2xl px-4 py-2.5">{error}</div>
+        <div className="text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/20 rounded-2xl px-4 py-2 mt-2">
+          {error}
+        </div>
       )}
     </div>
   );
 }
 
-/* ─── Speaker Column ─── */
+/* ═══════════════════════════════════════════════════════════════════
+   SUBTITLE ROW
+   ═══════════════════════════════════════════════════════════════════ */
 
-interface SpeakerColumnProps {
-  speaker: SpeakerId; lang: string; targetLang: string; state: SpeakerState;
-  utterances: CallUtterance[]; onStart: () => void; onStop: () => void;
-  onPlay: (text: string) => void; disabled?: boolean;
+interface SubtitleRowProps {
+  subtitle: Subtitle;
+  onSpeak: (text: string, lang: string) => void;
+  myLang: string;
+  peerLang: string;
 }
 
-function SpeakerColumn({ speaker, lang, targetLang, state, utterances, onStart, onStop, onPlay, disabled }: SpeakerColumnProps) {
-  const tag = speaker === "A" ? "Person A" : "Person B";
-  return (
-    <section className="surface relative flex min-h-[45dvh] lg:min-h-[480px] flex-col gap-4 overflow-hidden px-5 py-5 lg:px-7 lg:py-6">
-      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/40 to-transparent" />
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="label-eyebrow">{tag}</p>
-          <p className="mt-1.5 font-display text-xl font-semibold tracking-tight text-white">{lang} → {targetLang}</p>
-        </div>
-        <span className={`pill ${state.recording ? "text-rose-200" : "text-ink-400"}`}>
-          <span className={`h-2 w-2 rounded-full ${state.recording ? "bg-rose-300" : "bg-ink-500"}`} />
-          {state.recording ? "Listening" : "Ready"}
-        </span>
-      </div>
+const SubtitleRow = memo(function SubtitleRow({ subtitle: s, onSpeak, myLang, peerLang }: SubtitleRowProps) {
+  const isMine = s.from === "me";
 
-      <div className="smooth-scroll flex-1 space-y-3 overflow-y-auto pr-1 scrollbar-thin">
-        {utterances.length === 0 && !state.partial && (
-          <div className="flex h-full items-center justify-center text-center text-sm text-ink-500">
-            Tap the mic and start speaking.
+  return (
+    <div className={`flex ${isMine ? "justify-end" : "justify-start"} animate-fade-up`} style={{ animationDuration: "180ms" }}>
+      <div className={`max-w-[88%] sm:max-w-[78%] rounded-2xl px-4 py-3 space-y-1.5 ${
+        isMine
+          ? "rounded-br-md bg-teal-500/10 ring-1 ring-teal-400/15"
+          : "rounded-bl-md bg-white/[0.03] ring-1 ring-white/[0.05]"
+      }`}>
+        {/* Original text */}
+        <p className="text-[13px] text-ink-200 leading-relaxed">{s.original}</p>
+
+        {/* Translation */}
+        {(s.translation || !s.done) && (
+          <div className={`border-t pt-1.5 ${isMine ? "border-teal-400/10" : "border-white/[0.04]"}`}>
+            <div className="flex items-start justify-between gap-2">
+              <p className={`text-[13px] font-medium leading-relaxed ${
+                s.translation ? (isMine ? "text-teal-200/80" : "text-violet-200/80") : "text-ink-500"
+              } ${!s.done && s.translation ? "typing-caret" : ""}`}>
+                {s.translation || (s.done ? "" : "...")}
+              </p>
+              {s.done && s.translation && (
+                <button
+                  type="button"
+                  onClick={() => onSpeak(s.translation, isMine ? peerLang : myLang)}
+                  className="icon-btn w-6 h-6 shrink-0"
+                  aria-label="Play"
+                >
+                  <Volume2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
         )}
-        {utterances.map((u) => <UtteranceItem key={u.id} utterance={u} onPlay={onPlay} />)}
-        {state.partial && (
-          <div className="rounded-2xl bg-white/[0.03] p-3 text-sm italic text-ink-400 ring-1 ring-white/[0.04] animate-fade-in">{state.partial}</div>
-        )}
       </div>
-
-      <button
-        type="button"
-        onClick={state.recording ? onStop : onStart}
-        disabled={disabled}
-        className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-all duration-200 ease-premium active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 ${
-          state.recording
-            ? "bg-rose-500/90 text-white shadow-[0_16px_40px_-16px_rgba(244,63,94,0.6)] animate-pulse-soft"
-            : "bg-white/[0.05] text-white ring-1 ring-white/[0.07] hover:bg-white/[0.08]"
-        }`}
-      >
-        {state.recording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-        {state.recording ? "Stop" : `Talk as ${tag}`}
-      </button>
-    </section>
+    </div>
   );
-}
-
-/* ─── Utterance Item ─── */
-
-const UtteranceItem = memo(
-  function UtteranceItem({ utterance: u, onPlay }: { utterance: CallUtterance; onPlay: (text: string) => void }) {
-    return (
-      <div className="stream-pane rounded-2xl bg-white/[0.03] p-3.5 ring-1 ring-white/[0.05] space-y-2 animate-fade-in">
-        <div className="text-sm leading-6 text-ink-100">{u.original}</div>
-        <div className="flex items-start gap-2 text-sm leading-6 text-teal-200">
-          <span className={`flex-1 whitespace-pre-wrap ${!u.done ? "typing-caret" : ""}`}>
-            {u.translation || (u.done ? "..." : "translating...")}
-          </span>
-          {u.translation && (
-            <button type="button" onClick={() => onPlay(u.translation)} className="icon-btn h-7 w-7 shrink-0" aria-label="Play translation">
-              <Volume2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  },
-  (prev, next) =>
-    prev.utterance.translation === next.utterance.translation &&
-    prev.utterance.done === next.utterance.done &&
-    prev.utterance.original === next.utterance.original,
+}, (prev, next) =>
+  prev.subtitle.original === next.subtitle.original &&
+  prev.subtitle.translation === next.subtitle.translation &&
+  prev.subtitle.done === next.subtitle.done
 );
