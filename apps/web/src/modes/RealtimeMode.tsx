@@ -2,6 +2,7 @@ import { ArrowLeftRight, Copy, Volume2 } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { RecordButton } from "../components/RecordButton";
+import { useToast } from "../components/Toast";
 import { useLanguages } from "../hooks/useLanguages";
 import { useStreamingText } from "../hooks/useStreamingText";
 import { useTTS } from "../hooks/useTTS";
@@ -20,21 +21,18 @@ interface Prefs {
 }
 
 const PREFS_KEY = "translator:realtime";
-
-const DEFAULT_PREFS: Prefs = {
-  source: "en-US",
-  target: "ru-RU",
-  autoSpeak: true,
-};
+const DEFAULT_PREFS: Prefs = { source: "en-US", target: "ru-RU", autoSpeak: true };
 
 export function RealtimeMode() {
   const languages = useLanguages();
+  const { toast } = useToast();
   const [prefs, setPrefs] = useState<Prefs>(() => loadJSON(PREFS_KEY, DEFAULT_PREFS));
   const [recording, setRecording] = useState(false);
   const [partial, setPartial] = useState("");
   const [transcript, setTranscript] = useState("");
   const translation = useStreamingText();
   const [error, setError] = useState<string | null>(null);
+  const [swapAnimating, setSwapAnimating] = useState(false);
 
   const { speak, cancel } = useTTS();
   const recognizerRef = useRef<RecognitionController | null>(null);
@@ -106,35 +104,54 @@ export function RealtimeMode() {
     setRecording(true);
   }, [prefs.source, translate, cancel, translation]);
 
-  useEffect(
-    () => () => {
-      recognizerRef.current?.abort();
-      abortRef.current?.abort();
-    },
-    [],
-  );
+  useEffect(() => () => {
+    recognizerRef.current?.abort();
+    abortRef.current?.abort();
+  }, []);
 
-  const swapLanguages = () =>
+  const swapLanguages = useCallback(() => {
+    setSwapAnimating(true);
+    setTimeout(() => setSwapAnimating(false), 450);
     setPrefs((p) => ({
       ...p,
       source: p.target === "auto" ? "en-US" : p.target,
       target: p.source === "auto" ? "en-US" : p.source,
     }));
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        swapLanguages();
+      }
+    }
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [swapLanguages]);
+
+  const copyText = useCallback(async (text: string) => {
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    toast("Copied to clipboard");
+  }, [toast]);
 
   return (
     <div className="flex flex-col gap-8 animate-fade-up">
       {/* Hero */}
       <header className="flex flex-col gap-2">
         <span className="label-eyebrow">Real-time</span>
-        <h1 className="heading-display text-[34px] sm:text-[40px] lg:text-[52px] leading-[1.05]">
+        <h1 className="heading-display text-[32px] sm:text-[38px] lg:text-[48px] leading-[1.08]">
           Speak.{" "}
           <span className="bg-clip-text text-transparent bg-brand-grad">
             Hear it translated.
           </span>
         </h1>
         <p className="text-ink-400 max-w-xl text-[15px] leading-relaxed">
-          On-device speech recognition feeds the cloud streaming translator —
-          your words become another language with sub-second turnaround.
+          On-device speech recognition + cloud streaming translation.
+          Sub-second turnaround.
         </p>
       </header>
 
@@ -150,7 +167,7 @@ export function RealtimeMode() {
         <button
           type="button"
           onClick={swapLanguages}
-          className="icon-btn"
+          className={`icon-btn ${swapAnimating ? "swap-animate" : ""}`}
           aria-label="Swap languages"
         >
           <ArrowLeftRight className="w-4 h-4" />
@@ -165,41 +182,41 @@ export function RealtimeMode() {
         />
       </div>
 
-      {!supported ? (
+      {/* Browser support warning */}
+      {!supported && (
         <div className="surface px-5 py-4 text-sm text-amber-200/90 border-amber-400/20">
-          Your browser does not support speech recognition. Try Chrome, Edge, or
-          Safari, or use{" "}
-          <a href="/translate" className="underline decoration-teal-300 underline-offset-4">
+          Your browser doesn't support speech recognition. Try Chrome, Edge, or Safari, or use{" "}
+          <a href="/translate" className="underline decoration-teal-300/60 underline-offset-4 hover:text-teal-200 transition-colors">
             AI Translation
           </a>{" "}
           instead.
         </div>
-      ) : null}
+      )}
 
-      {/* Two-pane: transcript + translation. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+      {/* Two panes */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5">
         <Pane
           label="You said"
           text={transcript}
           partial={partial}
-          empty="Tap the mic and start speaking…"
-          onCopy={() => void navigator.clipboard.writeText(transcript)}
+          empty="Tap the mic and start speaking..."
+          onCopy={() => void copyText(transcript)}
           onSpeak={() => void speak(transcript, { lang: prefs.source })}
         />
         <Pane
           label="Translation"
           text={translation.text}
-          empty={recording ? "Listening…" : "Translation will appear here."}
+          empty={recording ? "Listening..." : "Translation appears here."}
           accent
           loading={recording && !translation.text}
           streaming={recording && !!translation.text}
-          onCopy={() => void navigator.clipboard.writeText(translation.peek())}
+          onCopy={() => void copyText(translation.peek())}
           onSpeak={() => void speak(translation.peek(), { lang: prefs.target })}
         />
       </div>
 
-      {/* Mic + auto-speak. Floats nicely above bottom nav on mobile. */}
-      <div className="flex flex-col items-center gap-4 pt-4">
+      {/* Record controls */}
+      <div className="flex flex-col items-center gap-5 pt-4">
         <RecordButton
           recording={recording}
           onStart={start}
@@ -208,42 +225,39 @@ export function RealtimeMode() {
         />
         <p
           aria-live="polite"
-          className={`text-[13px] tracking-tight transition-colors duration-200 ${
+          className={`text-[13px] font-medium tracking-tight transition-colors duration-200 ${
             recording ? "text-teal-300" : "text-ink-400"
           }`}
         >
           {recording ? "Listening — tap to stop" : "Tap to start speaking"}
         </p>
+
+        {/* Auto-speak toggle */}
         <label className="flex items-center gap-3 select-none cursor-pointer text-sm text-ink-300">
           <span className="relative inline-flex">
             <input
               type="checkbox"
               checked={prefs.autoSpeak}
-              onChange={(e) =>
-                setPrefs((p) => ({ ...p, autoSpeak: e.target.checked }))
-              }
+              onChange={(e) => setPrefs((p) => ({ ...p, autoSpeak: e.target.checked }))}
               className="peer sr-only"
             />
-            <span
-              aria-hidden
-              className="w-9 h-5 rounded-full bg-white/[0.08] ring-1 ring-white/[0.07] peer-checked:bg-brand-grad transition-colors duration-200"
-            />
-            <span
-              aria-hidden
-              className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"
-            />
+            <span aria-hidden className="w-9 h-5 rounded-full bg-white/[0.08] ring-1 ring-white/[0.06] peer-checked:bg-brand-grad transition-all duration-200" />
+            <span aria-hidden className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-4" />
           </span>
           Speak the translation aloud
         </label>
-        {error ? (
-          <div className="text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/25 rounded-xl px-4 py-2">
+
+        {error && (
+          <div className="animate-fade-up text-sm text-rose-300/90 bg-rose-500/10 ring-1 ring-rose-500/20 rounded-2xl px-4 py-2.5">
             {error}
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
 }
+
+/* ─── Pane Component ─── */
 
 interface PaneProps {
   label: string;
@@ -258,44 +272,21 @@ interface PaneProps {
 }
 
 const Pane = memo(function Pane({
-  label,
-  text,
-  partial,
-  empty,
-  accent,
-  loading,
-  streaming,
-  onCopy,
-  onSpeak,
+  label, text, partial, empty, accent, loading, streaming, onCopy, onSpeak,
 }: PaneProps) {
   const showPlaceholder = !text && !partial;
   return (
-    <div className="surface relative px-5 py-5 lg:px-7 lg:py-7 min-h-[260px] flex flex-col gap-3 overflow-hidden">
-      {accent ? (
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/60 to-transparent"
-        />
-      ) : null}
+    <div className="surface relative px-5 py-5 lg:px-7 lg:py-6 min-h-[240px] flex flex-col gap-3 overflow-hidden">
+      {accent && (
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/50 to-transparent" />
+      )}
       <div className="flex items-center justify-between">
         <span className="label-eyebrow">{label}</span>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            className="icon-btn"
-            disabled={!text}
-            onClick={onSpeak}
-            aria-label={`Play ${label}`}
-          >
+        <div className="flex items-center gap-0.5">
+          <button type="button" className="icon-btn" disabled={!text} onClick={onSpeak} aria-label={`Play ${label}`}>
             <Volume2 className="w-4 h-4" />
           </button>
-          <button
-            type="button"
-            className="icon-btn"
-            disabled={!text}
-            onClick={onCopy}
-            aria-label={`Copy ${label}`}
-          >
+          <button type="button" className="icon-btn" disabled={!text} onClick={onCopy} aria-label={`Copy ${label}`}>
             <Copy className="w-4 h-4" />
           </button>
         </div>
@@ -311,9 +302,7 @@ const Pane = memo(function Pane({
         ) : (
           <span className={streaming ? "typing-caret" : undefined}>{text}</span>
         )}
-        {partial ? (
-          <span className="text-ink-400 italic"> {partial}</span>
-        ) : null}
+        {partial && <span className="text-ink-400 italic"> {partial}</span>}
       </div>
     </div>
   );

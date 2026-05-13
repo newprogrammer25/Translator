@@ -10,9 +10,8 @@ interface Props {
 }
 
 /**
- * Premium pill-style language picker. Keeps a real `<select>` so the native OS
- * picker appears on mobile (much better UX on iOS/Android than a custom
- * dropdown) but styles it as a glassy pill with chevron.
+ * Premium language picker — uses native <select> for mobile sheet UX,
+ * styled as a pill with flag + name.
  */
 export function LanguageSelect({
   value,
@@ -23,12 +22,13 @@ export function LanguageSelect({
   ariaLabel,
 }: Props) {
   const list = excludeAuto ? languages.filter((l) => l.code !== "auto") : languages;
+
   return (
     <select
       aria-label={ariaLabel}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`select-pill ${className ?? ""}`}
+      className={`select-pill w-full ${className ?? ""}`}
     >
       {list.map((lang) => (
         <option key={lang.code} value={lang.code}>
